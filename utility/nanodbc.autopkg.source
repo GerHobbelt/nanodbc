@@ -1,0 +1,74 @@
+configurations
+{
+	Toolset
+	{
+		key : "PlatformToolset";
+		choices : { v140, v141 };
+	};
+};
+
+nuget
+{
+	nuspec
+	{
+		id : nanodbc;
+		version : %VERSION%;
+		title : nanodbc;
+		authors: { Mateusz Loskot, lexicalunit, contributors };
+		owners: { Mateusz Loskot, lexicalunit, contributors };
+		licenseUrl: "https://github.com/nanodbc/nanodbc/blob/master/LICENSE";
+		iconUrl: "https://cloud.githubusercontent.com/assets/1903876/11858632/cc0e21e6-a428-11e5-9a84-39fa27984914.png";
+		requireLicenseAcceptance:false;
+		summary: A small C++ wrapper for the native C ODBC API;
+		description: @"Nanodbc";
+		releaseNotes: "This package includes the cpp and the header files.";
+		projectUrl: "https://nanodbc.github.io/nanodbc/";
+		copyright: Copyright (C) 2013 lexicalunit lexicalunit@lexicalunit.com;
+		tags: { odbc, nanodbc, database, native, cpp };
+	};
+ 
+	dependencies
+	{
+		packages:
+		{
+		};
+	};
+
+	files
+	{
+		// The expression preserves and recreates the subdirectories instead of flattening them.
+		nestedInclude:
+		{
+			#destination = ${d_include}nanodbc;
+			"..\nanodbc\nanodbc.h";
+			"..\nanodbc\nanodbc.cpp";
+		};
+
+		[x64,v140,Release]
+		{
+			lib: {}
+			symbols: {}
+			bin: {}
+		};
+		[x64,v141,Release]
+		{
+			lib: {}
+			symbols: {}
+			bin: {}
+		};
+
+		// Debug Versions
+		[x64,v140,Debug]
+		{
+			lib: {}
+			symbols: {}
+			bin: {}
+		};
+		[x64,v141,Debug]
+		{
+			lib: {}
+			symbols: {}
+			bin: {}
+		};
+	};
+}

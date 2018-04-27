@@ -13,7 +13,7 @@
 #pragma warning(disable : 4996) // warning about deprecated declaration
 #endif
 
-#include <nanodbc/nanodbc.h>
+#include "nanodbc.h"
 
 #include <algorithm>
 #include <clocale>
@@ -134,7 +134,7 @@ using nanodbc::wide_string;
 #define NANODBC_FUNC(f) f##W
 #define NANODBC_SQLCHAR SQLWCHAR
 #else
-#define NANODBC_FUNC(f) f
+#define NANODBC_FUNC(f) f##A
 #define NANODBC_SQLCHAR SQLCHAR
 #endif
 
