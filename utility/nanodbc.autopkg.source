@@ -14,8 +14,8 @@ nuget
 		id : nanodbc;
 		version : %VERSION%;
 		title : nanodbc;
-		authors: { Mateusz Loskot, lexicalunit, contributors };
-		owners: { Mateusz Loskot, lexicalunit, contributors };
+		authors: {Mateusz Loskot,lexicalunit,contributors};
+		owners: {Mateusz Loskot,lexicalunit,contributors};
 		licenseUrl: "https://github.com/nanodbc/nanodbc/blob/master/LICENSE";
 		iconUrl: "https://cloud.githubusercontent.com/assets/1903876/11858632/cc0e21e6-a428-11e5-9a84-39fa27984914.png";
 		requireLicenseAcceptance:true;
@@ -24,7 +24,7 @@ nuget
 		releaseNotes: "This package includes the cpp and the header files.";
 		projectUrl: "https://nanodbc.github.io/nanodbc/";
 		copyright: Copyright (C) 2013 lexicalunit lexicalunit@lexicalunit.com;
-		tags: { odbc, nanodbc, database, native, cpp };
+		tags: {odbc,nanodbc,database,native,cpp};
 	};
  
 	dependencies
