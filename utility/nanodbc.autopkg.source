@@ -38,8 +38,7 @@ nuget
 		nestedInclude:
 		{
 			#destination = ${d_include}nanodbc;
-			"..\nanodbc\nanodbc.h";
-			"..\nanodbc\nanodbc.cpp";
+			"..\nanodbc\nanodbc.*";
 		};
 
 		[x64,v140,Release]
