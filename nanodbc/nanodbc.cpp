@@ -31,12 +31,12 @@
 #include <cstdint>
 #endif
 
-// if newer than C++14 use <optional> 
-#if __cplusplus > 201402L   
+// if newer than C++14 use <optional>
+#if __cplusplus > 201402L
 #include <optional>
-#define std_optional    std::optional
+#define std_optional std::optional
 template <class T>
-inline static void opt_reset(std_optional<T> &opt)
+inline static void opt_reset(std_optional<T>& opt)
 {
     opt.reset();
     return;
@@ -44,19 +44,23 @@ inline static void opt_reset(std_optional<T> &opt)
 // else use <experimental/optional>
 #else
 #include <experimental/optional>
-#define std_optional    std::experimental::optional
+#define std_optional std::experimental::optional
 template <class T>
-inline static void opt_reset(std_optional<T> &opt)
+inline static void opt_reset(std_optional<T>& opt)
 {
     return;
 }
 #endif
 
 template <typename T, typename Enable = void>
-struct is_optional : std::false_type {};
+struct is_optional : std::false_type
+{
+};
 
 template <typename T>
-struct is_optional<std_optional<T> > : std::true_type {};
+struct is_optional<std_optional<T>> : std::true_type
+{
+};
 
 // User may redefine NANODBC_ASSERT macro in nanodbc/nanodbc.h
 #ifndef NANODBC_ASSERT
@@ -3445,13 +3449,14 @@ public:
     void get_ref(short column, T& result) const
     {
         throw_if_column_is_out_of_range(column);
-        if (is_null(column)){
+        if (is_null(column))
+        {
             opt_reset(result);
             return;
         }
         get_ref_impl<std::remove_reference_t<decltype(*result)>>(column, *result);
     }
-    
+
     template <class T>
     void get_ref(short column, T const& fallback, T& result) const
     {
@@ -3486,7 +3491,8 @@ public:
     void get_ref(string const& column_name, T& result) const
     {
         short const column = this->column(column_name);
-        if (is_null(column)){
+        if (is_null(column))
+        {
             opt_reset(result);
             return;
         }
@@ -3808,10 +3814,10 @@ private:
             rc,
             stmt_.native_statement_handle(),
             static_cast<SQLUSMALLINT>(column.column_ + 1), // ColumnNumber
-            column.ctype_,      // TargetType
-            column.pdata_,      // TargetValuePtr
-            column.clen_,       // BufferLength
-            column.cbdata_);    // StrLen_or_Ind
+            column.ctype_,                                 // TargetType
+            column.pdata_,                                 // TargetValuePtr
+            column.clen_,                                  // BufferLength
+            column.cbdata_);                               // StrLen_or_Ind
         if (!success(rc))
             NANODBC_THROW_DATABASE_ERROR(stmt_.native_statement_handle(), SQL_HANDLE_STMT);
         column.bound_ = true;
@@ -3945,12 +3951,12 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
                 NANODBC_CALL_RC(
                     SQLGetData,
                     rc,
-                    handle,          // StatementHandle
+                    handle,                                // StatementHandle
                     static_cast<SQLUSMALLINT>(column + 1), // Col_or_Param_Num
-                    col.ctype_,      // TargetType
-                    buffer,          // TargetValuePtr
-                    buffer_size,     // BufferLength
-                    &ValueLenOrInd); // StrLen_or_IndPtr
+                    col.ctype_,                            // TargetType
+                    buffer,                                // TargetValuePtr
+                    buffer_size,                           // BufferLength
+                    &ValueLenOrInd);                       // StrLen_or_IndPtr
                 if (ValueLenOrInd == SQL_NO_TOTAL)
                     out.append(buffer, col.ctype_ == SQL_C_BINARY ? buffer_size : buffer_size - 1);
                 else if (ValueLenOrInd > 0)
@@ -4002,12 +4008,12 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
                 NANODBC_CALL_RC(
                     SQLGetData,
                     rc,
-                    handle,          // StatementHandle
+                    handle,                                // StatementHandle
                     static_cast<SQLUSMALLINT>(column + 1), // Col_or_Param_Num
-                    col.ctype_,      // TargetType
-                    buffer,          // TargetValuePtr
-                    buffer_size,     // BufferLength
-                    &ValueLenOrInd); // StrLen_or_IndPtr
+                    col.ctype_,                            // TargetType
+                    buffer,                                // TargetValuePtr
+                    buffer_size,                           // BufferLength
+                    &ValueLenOrInd);                       // StrLen_or_IndPtr
                 if (ValueLenOrInd == SQL_NO_TOTAL)
                     out.append(buffer, (buffer_size / sizeof(wide_char_t)) - 1);
                 else if (ValueLenOrInd > 0)
@@ -4183,12 +4189,12 @@ inline void result::result_impl::get_ref_impl<std::vector<std::uint8_t>>(
                 NANODBC_CALL_RC(
                     SQLGetData,
                     rc,
-                    handle,          // StatementHandle
+                    handle,                                // StatementHandle
                     static_cast<SQLUSMALLINT>(column + 1), // Col_or_Param_Num
-                    SQL_C_BINARY,    // TargetType
-                    buffer,          // TargetValuePtr
-                    buffer_size,     // BufferLength
-                    &ValueLenOrInd); // StrLen_or_IndPtr
+                    SQL_C_BINARY,                          // TargetType
+                    buffer,                                // TargetValuePtr
+                    buffer_size,                           // BufferLength
+                    &ValueLenOrInd);                       // StrLen_or_IndPtr
                 if (ValueLenOrInd > 0)
                 {
                     auto const buffer_size_filled =
@@ -4496,12 +4502,12 @@ std::unique_ptr<T, std::function<void(T*)>> result::result_impl::ensure_pdata(sh
     NANODBC_CALL_RC(
         SQLGetData,
         rc,
-        handle,              // StatementHandle
+        handle,                                // StatementHandle
         static_cast<SQLUSMALLINT>(column + 1), // Col_or_Param_Num
-        sql_ctype<T>::value, // TargetType
-        buffer,              // TargetValuePtr
-        buffer_size,         // BufferLength
-        &ValueLenOrInd);     // StrLen_or_IndPtr
+        sql_ctype<T>::value,                   // TargetType
+        buffer,                                // TargetValuePtr
+        buffer_size,                           // BufferLength
+        &ValueLenOrInd);                       // StrLen_or_IndPtr
 
     if (ValueLenOrInd == SQL_NULL_DATA)
         col.cbdata_[static_cast<size_t>(rowset_position_)] = (SQLINTEGER)SQL_NULL_DATA;
@@ -5398,7 +5404,6 @@ void statement::describe_parameters(
 }
 
 } // namespace nanodbc
-
 
 // clang-format off
 // 888b     d888  .d8888b.   .d8888b.   .d88888b.  888                       88888888888 888     888 8888888b.
