@@ -1086,7 +1086,7 @@ public:
     /// \see open(), prepare(), execute(), result, transaction
     void just_execute(long batch_operations = 1, long timeout = 0);
 
-    /// \brief Returns the input and output paramters of the specified stored procedure.
+    /// \brief Returns the input and output parameters of the specified stored procedure.
     /// \param catalog The catalog name of the procedure.
     /// \param schema Pattern to use for schema names.
     /// \param procedure The name of the procedure.
