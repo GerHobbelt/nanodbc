@@ -65,7 +65,18 @@ struct is_optional<std::optional<T>> : std::true_type
 
 #ifdef __APPLE__
 // silence spurious OS X deprecation warnings
-#define MAC_OS_X_VERSION_MIN_REQUIRED MAC_OS_X_VERSION_10_6
+#ifndef MAC_OS_X_VERSION_MIN_REQUIRED
+#if defined(__ppc__)
+#define MAC_OS_X_VERSION_MIN_REQUIRED 1040
+#elif defined(__ppc64__)
+#define MAC_OS_X_VERSION_MIN_REQUIRED 1050
+#elif defined(__i386__) || defined(__x86_64__)
+#define MAC_OS_X_VERSION_MIN_REQUIRED 1060
+#else
+// arm64 supported since macOS 11
+#define MAC_OS_X_VERSION_MIN_REQUIRED 110000
+#endif
+#endif
 #endif
 
 #ifdef _WIN32
