@@ -141,6 +141,16 @@ TEST_CASE_METHOD(mysql_fixture, "test_batch_delete", "[mysql][batch][delete]")
     test_batch_delete();
 }
 
+TEST_CASE_METHOD(mysql_fixture, "test_bind_optional", "[mysql][bind][null][optional]")
+{
+    test_bind_optional();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_batch_bind_optional", "[mysql][batch][null][optional]")
+{
+    test_batch_bind_optional();
+}
+
 TEST_CASE_METHOD(mysql_fixture, "test_batch_insert_null", "[mysql][batch][null]")
 {
     test_batch_insert_null();
@@ -169,6 +179,16 @@ TEST_CASE_METHOD(mysql_fixture, "test_bind_rows_null", "[mysql][batch][bind_rows
 TEST_CASE_METHOD(mysql_fixture, "test_std_optional", "[mysql][optional]")
 {
     test_std_optional();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_std_any", "[mysql][any]")
+{
+    test_std_any();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_std_variant", "[mysql][variant]")
+{
+    test_std_variant();
 }
 
 TEST_CASE_METHOD(
@@ -234,6 +254,16 @@ TEST_CASE_METHOD(mysql_fixture, "test_connection_environment", "[mysql][connecti
 TEST_CASE_METHOD(mysql_fixture, "test_connection_attributes", "[mysql][connection][attributes]")
 {
     test_connection_attributes();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_connection_per_thread", "[mysql][connection][threads]")
+{
+    test_connection_per_thread();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_browse_connect_unsupported", "[mysql][connection][browse]")
+{
+    test_browse_connect_unsupported();
 }
 
 TEST_CASE_METHOD(mysql_fixture, "test_dbms_info", "[mysql][dmbs][metadata][info]")

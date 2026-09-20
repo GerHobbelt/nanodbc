@@ -39,10 +39,12 @@ Each release line sets a minimum C++ standard. Pick the nanodbc version whose mi
      - Minimum C++ standard
    * - ``< 2.12``
      - C++11
-   * - ``>= 2.12``
+   * - ``2.12`` - ``2.x``
      - C++14
+   * - ``>= 3.0``
+     - C++17
 
-CI builds every supported compiler against C++14, C++17 and C++20, so all three are exercised on each change.
+CI builds every supported compiler against C++17 and C++20, so both are exercised on each change.
 
 Requirements
 ==============================================================================
@@ -155,7 +157,7 @@ There is one test program per database, so a single suite can be run on its own:
 
   ctest --test-dir build --output-on-failure -R sqlite_tests
 
-The utility tests need no database at all, and the SQLite tests need only a SQLite ODBC driver, registered as ``SQLite3`` on \*nix systems and as ``SQLite3 ODBC Driver`` on Windows, since the tests name the driver rather than a data source. Those two are the quickest way to check a build. The remaining suites need a running server, and the Vertica tests additionally need Vertica's own ODBC driver, which is why a full run excludes them.
+The utility tests need no database at all, and the SQLite tests need only a SQLite ODBC driver, registered as ``SQLite3`` on \*nix systems and as ``SQLite3 ODBC Driver`` on Windows, since the tests name the driver rather than a data source. Those two are the quickest way to check a build. The remaining suites need a running server, and the Vertica tests additionally need Vertica's own ODBC driver, which is why a full run excludes them. ClickHouse's driver is published for Linux on x86_64 only, so that suite has to be excluded too on any other host. The Firebird suite is built for a narrow configuration only, its driver's Unicode entry points being unable to open a connection.
 
 Each suite reads its own ``NANODBC_TEST_CONNSTR_<DB>`` environment variable for the connection string, falling back to ``NANODBC_TEST_CONNSTR``. Rather than installing the servers, use the containers the repository provides, which preset those variables; see :ref:`Develop <develop>`.
 

@@ -44,6 +44,16 @@ TEST_CASE_METHOD(oracle_fixture, "test_bind_rows_null", "[oracle][batch][bind_ro
     test_bind_rows_null();
 }
 
+TEST_CASE_METHOD(oracle_fixture, "test_bind_optional", "[oracle][bind][null][optional]")
+{
+    test_bind_optional();
+}
+
+TEST_CASE_METHOD(oracle_fixture, "test_batch_bind_optional", "[oracle][batch][null][optional]")
+{
+    test_batch_bind_optional();
+}
+
 TEST_CASE_METHOD(oracle_fixture, "test_batch_insert_null", "[oracle][batch][null]")
 {
     test_batch_insert_null();
@@ -120,6 +130,16 @@ TEST_CASE_METHOD(oracle_fixture, "test_connection_environment", "[oracle][connec
 TEST_CASE_METHOD(oracle_fixture, "test_connection_attributes", "[oracle][connection][attributes]")
 {
     test_connection_attributes();
+}
+
+TEST_CASE_METHOD(oracle_fixture, "test_connection_per_thread", "[oracle][connection][threads]")
+{
+    test_connection_per_thread();
+}
+
+TEST_CASE_METHOD(oracle_fixture, "test_browse_connect_unsupported", "[oracle][connection][browse]")
+{
+    test_browse_connect_unsupported();
 }
 
 TEST_CASE_METHOD(oracle_fixture, "test_datasources", "[oracle][datasources]")

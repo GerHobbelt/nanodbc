@@ -33,9 +33,7 @@
 #include <sql.h>
 #include <sqlext.h>
 
-namespace nanodbc
-{
-namespace test
+namespace nanodbc::test
 {
 
 // UTF-8 conversion for the test and example helpers.
@@ -73,7 +71,11 @@ inline void append_as_utf8(char32_t cp, std::string& out)
 template <class T>
 inline void append_as_wide(char32_t cp, std::basic_string<T>& out)
 {
-    if (sizeof(T) == 4 || cp < 0x10000)
+    if constexpr (sizeof(T) == 4)
+    {
+        out.push_back(static_cast<T>(cp));
+    }
+    else if (cp < 0x10000)
     {
         out.push_back(static_cast<T>(cp));
     }
@@ -127,20 +129,25 @@ inline char32_t next_utf8_code_point(char const*& beg, char const* end)
 }
 
 template <class T>
-inline char32_t next_wide_code_point(T const*& beg, T const* end)
+inline char32_t next_wide_code_point(T const*& beg, [[maybe_unused]] T const* end)
 {
-    char32_t const unit =
-        static_cast<char32_t>(static_cast<typename std::make_unsigned<T>::type>(*beg++));
-    if (sizeof(T) == 4 || unit < 0xD800 || unit > 0xDFFF)
+    char32_t const unit = static_cast<char32_t>(static_cast<std::make_unsigned_t<T>>(*beg++));
+    if constexpr (sizeof(T) == 4)
+    {
         return unit;
-    if (unit >= 0xDC00 || beg == end)
-        throw std::range_error("wide -> UTF-8 conversion error");
-    char32_t const trail =
-        static_cast<char32_t>(static_cast<typename std::make_unsigned<T>::type>(*beg));
-    if (trail < 0xDC00 || trail > 0xDFFF)
-        throw std::range_error("wide -> UTF-8 conversion error");
-    ++beg;
-    return 0x10000 + ((unit - 0xD800) << 10) + (trail - 0xDC00);
+    }
+    else
+    {
+        if (unit < 0xD800 || unit > 0xDFFF)
+            return unit;
+        if (unit >= 0xDC00 || beg == end)
+            throw std::range_error("wide -> UTF-8 conversion error");
+        char32_t const trail = static_cast<char32_t>(static_cast<std::make_unsigned_t<T>>(*beg));
+        if (trail < 0xDC00 || trail > 0xDFFF)
+            throw std::range_error("wide -> UTF-8 conversion error");
+        ++beg;
+        return 0x10000 + ((unit - 0xD800) << 10) + (trail - 0xDC00);
+    }
 }
 
 } // namespace detail
@@ -232,8 +239,7 @@ inline IntAnyOf IsAnyOf(std::initializer_list<int> v)
 {
     return IntAnyOf(std::move(v));
 }
-} // namespace test
-} // namespace nanodbc
+} // namespace nanodbc::test
 
 extern nanodbc::test::Config cfg;
 
@@ -251,7 +257,9 @@ struct base_test_fixture
         postgresql,
         mysql,
         sqlserver,
-        vertica
+        vertica,
+        clickhouse,
+        firebird
     };
 
     base_test_fixture()
@@ -298,6 +306,10 @@ struct base_test_fixture
             return database_vendor::sqlserver;
         else if (contains_string(dbms, NANODBC_TEXT("Vertica")))
             return database_vendor::vertica;
+        else if (contains_string(dbms, NANODBC_TEXT("ClickHouse")))
+            return database_vendor::clickhouse;
+        else if (contains_string(dbms, NANODBC_TEXT("Firebird")))
+            return database_vendor::firebird;
         else
             return database_vendor::unknown;
     }
@@ -323,6 +335,9 @@ struct base_test_fixture
             // Oracle spells a bounded binary raw, which holds 2000 bytes at most, and
             // anything longer than that a blob.
             return size > 0 && size <= 2000 ? NANODBC_TEXT("raw") + s : NANODBC_TEXT("blob");
+        case database_vendor::firebird:
+            // Firebird has no varbinary; a binary column is a blob of the binary subtype.
+            return NANODBC_TEXT("blob sub_type binary");
         default:
             return NANODBC_TEXT("varbinary") + s;
         }
@@ -372,6 +387,9 @@ struct base_test_fixture
         case database_vendor::oracle:
             // Oracle has no text; a character column with no bound is a clob.
             return NANODBC_TEXT("clob");
+        case database_vendor::firebird:
+            // Firebird spells an unbounded character column a text blob.
+            return NANODBC_TEXT("blob sub_type text");
         default:
             return NANODBC_TEXT("text");
         }
@@ -394,18 +412,22 @@ struct base_test_fixture
             // Oracle spells it listagg, and wants the order stated.
             return NANODBC_TEXT("listagg(") + column + NANODBC_TEXT(", '") + separator +
                    NANODBC_TEXT("') within group (order by ") + column + NANODBC_TEXT(")");
+        case database_vendor::firebird:
+            // Firebird spells it list.
+            return NANODBC_TEXT("list(") + column + NANODBC_TEXT(", '") + separator +
+                   NANODBC_TEXT("')");
         default:
             return NANODBC_TEXT("string_agg(") + column + NANODBC_TEXT(", '") + separator +
                    NANODBC_TEXT("')");
         }
     }
 
-    // An unquoted identifier folds to upper case on Oracle, which is what the standard
-    // asks for, so a name written lower case in a query comes back upper case from the
-    // catalog and has to be looked up that way.
+    // An unquoted identifier folds to upper case on Oracle and on Firebird, which is what
+    // the standard asks for, so a name written lower case in a query comes back upper case
+    // from the catalog and has to be looked up that way.
     nanodbc::string as_identifier(nanodbc::string const& name) const
     {
-        if (vendor_ != database_vendor::oracle)
+        if (vendor_ != database_vendor::oracle && vendor_ != database_vendor::firebird)
             return name;
 
         nanodbc::string folded;

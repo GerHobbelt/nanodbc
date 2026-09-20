@@ -28,7 +28,6 @@ struct mssql_fixture : public test_case_fixture
             connection_string_ = get_env("NANODBC_TEST_CONNSTR_MSSQL");
     }
 
-#ifdef NANODBC_HAS_STD_VARIANT
     using base_test_fixture::connect;
     nanodbc::connection
     connect(std::list<nanodbc::connection::attribute> const& attributes, bool const& is_async)
@@ -41,7 +40,6 @@ struct mssql_fixture : public test_case_fixture
         }
         return connection;
     }
-#endif
 
 #if !defined(NANODBC_DISABLE_ASYNC) && defined(WIN32)
     void test_async_internal(nanodbc::connection& conn, HANDLE& event_handle)
@@ -98,8 +96,7 @@ struct mssql_fixture : public test_case_fixture
                 NANODBC_TEXT("SELECT 1 FROM sys.types WHERE is_table_type = 1 AND name = '") +
                 name + NANODBC_TEXT("';");
             nanodbc::result results = execute(connection, sql);
-            results.next();
-            type_exists = (0 < results.rows());
+            type_exists = results.next() && 0 < results.rows();
         }
         catch (...)
         {
@@ -121,8 +118,7 @@ struct mssql_fixture : public test_case_fixture
             auto sql = NANODBC_TEXT("SELECT 1 FROM sys.procedures WHERE name = '") + name +
                        NANODBC_TEXT("';");
             nanodbc::result results = execute(connection, sql);
-            results.next();
-            procedure_exists = (0 < results.rows());
+            procedure_exists = results.next() && 0 < results.rows();
         }
         catch (...)
         {
@@ -234,6 +230,16 @@ TEST_CASE_METHOD(mssql_fixture, "test_batch_delete", "[mssql][batch][delete]")
     test_batch_delete();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_bind_optional", "[mssql][bind][null][optional]")
+{
+    test_bind_optional();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_batch_bind_optional", "[mssql][batch][null][optional]")
+{
+    test_batch_bind_optional();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_batch_insert_null", "[mssql][batch][null]")
 {
     test_batch_insert_null();
@@ -262,6 +268,16 @@ TEST_CASE_METHOD(mssql_fixture, "test_bind_rows_null", "[mssql][batch][bind_rows
 TEST_CASE_METHOD(mssql_fixture, "test_std_optional", "[mssql][optional]")
 {
     test_std_optional();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_std_any", "[mssql][any]")
+{
+    test_std_any();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_std_variant", "[mssql][variant]")
+{
+    test_std_variant();
 }
 
 TEST_CASE_METHOD(
@@ -558,13 +574,8 @@ TEST_CASE_METHOD(
 {
     nanodbc::connection conn = connect();
 
-#ifdef NANODBC_HAS_STD_VARIANT
     // Block Cursors: https://technet.microsoft.com/en-us/library/aa172590.aspx
     constexpr std::size_t const rowset_size = 2;
-#else
-    // Not testing block cursors
-    constexpr std::size_t const rowset_size = 1;
-#endif
 
     create_table(
         conn,
@@ -944,6 +955,11 @@ TEST_CASE_METHOD(mssql_fixture, "test_connection_environment", "[mssql][connecti
 TEST_CASE_METHOD(mssql_fixture, "test_connection_attributes", "[mssql][connection][attributes]")
 {
     test_connection_attributes();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_connection_per_thread", "[mssql][connection][threads]")
+{
+    test_connection_per_thread();
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_dbms_info", "[mssql][dmbs][metadata][info]")
@@ -1935,7 +1951,7 @@ TEST_CASE_METHOD(mssql_fixture, "test_bind_float", "[mssql][number][float]")
     {
         auto result =
             nanodbc::execute(conn, NANODBC_TEXT("select r,f,f24,f53,d from test_bind_float"));
-        result.next();
+        REQUIRE(result.next());
         // Read as text and read back as a number, each column names the value it holds.
         // Comparing numbers rather than characters leaves how many digits were written
         // out of it. Slicing the text instead truncates rather than rounds, which is how
@@ -2252,7 +2268,6 @@ TEST_CASE_METHOD(
     }
 }
 
-#ifdef NANODBC_HAS_STD_STRING_VIEW
 TEST_CASE_METHOD(
     mssql_table_valued_parameter_fixture,
     "test_table_valued_parameter_with_records_string_view",
@@ -2303,7 +2318,6 @@ TEST_CASE_METHOD(
         ++rcnt;
     }
 }
-#endif
 
 TEST_CASE_METHOD(
     mssql_table_valued_parameter_fixture,
@@ -2423,7 +2437,6 @@ TEST_CASE_METHOD(
     }
 }
 
-#ifdef NANODBC_HAS_STD_VARIANT
 TEST_CASE_METHOD(mssql_fixture, "test_conn_attributes", "[mssql][conn_attibutes]")
 {
     {
@@ -2499,7 +2512,6 @@ TEST_CASE_METHOD(mssql_fixture, "test_conn_attributes", "[mssql][conn_attibutes]
     }
 #endif
 }
-#endif
 
 #if defined(NANODBC_ENABLE_UNICODE)
 /* Test that when we have Unicode data stored in a
@@ -2661,6 +2673,109 @@ TEST_CASE_METHOD(mssql_fixture, "test_statement_procedure_columns", "[mssql][sta
 TEST_CASE_METHOD(mssql_fixture, "test_binary_read_shapes", "[mssql][result][binary]")
 {
     test_binary_read_shapes();
+}
+
+// An output parameter that comes back null leaves the buffer as it found it, so the value
+// alone cannot say whether the procedure set it. The indicator can.
+TEST_CASE_METHOD(mssql_fixture, "test_output_parameter_is_null", "[mssql][statement][bind]")
+{
+    auto connection = connect();
+    nanodbc::string const name = NANODBC_TEXT("test_output_parameter_is_null_proc");
+    try
+    {
+        execute(connection, NANODBC_TEXT("DROP PROCEDURE ") + name);
+    }
+    catch (...)
+    {
+    }
+    execute(
+        connection,
+        NANODBC_TEXT("CREATE PROCEDURE ") + name +
+            NANODBC_TEXT(
+                " @setme INT OUTPUT, @leaveme INT OUTPUT AS "
+                "BEGIN SET @setme = 42; SET @leaveme = NULL; END;"));
+
+    nanodbc::statement statement(connection);
+    statement.prepare(NANODBC_TEXT("{ CALL ") + name + NANODBC_TEXT("(?, ?) }"));
+
+    int setme = 0;
+    int leaveme = 12345;
+    statement.bind(0, &setme, nanodbc::statement::PARAM_OUT);
+    statement.bind(1, &leaveme, nanodbc::statement::PARAM_OUT);
+    statement.just_execute();
+
+    REQUIRE(setme == 42);
+    REQUIRE(!statement.parameter_is_null(0));
+
+    // The value says 12345, which is what was there before the call. Only the indicator
+    // tells that apart from a procedure that set it to 12345.
+    REQUIRE(statement.parameter_is_null(1));
+
+    // Nothing is bound to the third parameter, and there is no second value in the batch.
+    REQUIRE_THROWS_AS(statement.parameter_is_null(7), nanodbc::programming_error);
+    REQUIRE_THROWS_AS(statement.parameter_is_null(0, 64), nanodbc::index_range_error);
+}
+
+// Binding without preparing first. A bind asks the driver what the parameter is, which
+// needs a prepared statement, unless it has been told already.
+TEST_CASE_METHOD(mssql_fixture, "test_bind_without_prepare", "[mssql][statement][bind]")
+{
+    auto connection = connect();
+    create_table(
+        connection,
+        NANODBC_TEXT("test_bind_without_prepare"),
+        NANODBC_TEXT("(i int, s varchar(20))"));
+
+    nanodbc::statement statement(connection);
+
+    // Saying what the parameters are, so that binding does not have to ask.
+    std::vector<short> const index{0, 1};
+    std::vector<short> const type{SQL_INTEGER, SQL_VARCHAR};
+    std::vector<unsigned long> const size{10, 20};
+    std::vector<short> const scale{0, 0};
+    statement.describe_parameters(index, type, size, scale);
+
+    int const i = 7;
+    nanodbc::string const s = NANODBC_TEXT("no prepare");
+    statement.bind(0, &i);
+    statement.bind(1, s.c_str());
+
+    statement.execute_direct(
+        connection, NANODBC_TEXT("insert into test_bind_without_prepare (i, s) values (?, ?)"));
+
+    auto results = execute(connection, NANODBC_TEXT("select i, s from test_bind_without_prepare;"));
+    REQUIRE(results.next());
+    REQUIRE(results.get<int>(0) == 7);
+    REQUIRE(results.get<nanodbc::string>(1) == NANODBC_TEXT("no prepare"));
+
+    // Without describing them, the bind has to ask, and there is nothing to ask about.
+    nanodbc::statement undescribed(connection);
+    REQUIRE_THROWS_AS(undescribed.bind(0, &i), nanodbc::database_error);
+}
+
+// SQLBrowseConnect asks the driver what it needs in order to connect. SQL Server's driver
+// answers; most do not, and say so.
+TEST_CASE_METHOD(mssql_fixture, "test_browse_connect", "[mssql][connection][browse]")
+{
+    nanodbc::connection connection;
+    bool more_wanted = false;
+
+    // Whichever driver the suite is pointed at, rather than a name that is right on one
+    // runner and absent on the next.
+    auto const driver = NANODBC_TEXT("Driver={") +
+                        connection_string_parameter(NANODBC_TEXT("Driver")) + NANODBC_TEXT("}");
+    REQUIRE(driver != NANODBC_TEXT("Driver={}"));
+
+    auto const wanted = connection.browse_connect(driver, more_wanted);
+
+    // Given nothing but the driver, it wants the rest, and says which in a connection
+    // string of its own: the required attributes first, then the optional ones starred.
+    REQUIRE(more_wanted);
+    REQUIRE(!connection.connected());
+    REQUIRE(!wanted.empty());
+    REQUIRE(wanted.find(NANODBC_TEXT("SERVER")) != nanodbc::string::npos);
+    REQUIRE(wanted.find(NANODBC_TEXT("UID")) != nanodbc::string::npos);
+    REQUIRE(wanted.find(NANODBC_TEXT("PWD")) != nanodbc::string::npos);
 }
 
 // Binding a parameter in a direction other than PARAM_IN, which is what maps onto

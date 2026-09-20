@@ -127,6 +127,16 @@ TEST_CASE_METHOD(sqlite_fixture, "test_batch_delete", "[sqlite][batch][delete]")
     test_batch_delete();
 }
 
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_optional", "[sqlite][bind][null][optional]")
+{
+    test_bind_optional();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_batch_bind_optional", "[sqlite][batch][null][optional]")
+{
+    test_batch_bind_optional();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_null", "[sqlite][batch][null]")
 {
     test_batch_insert_null();
@@ -155,6 +165,16 @@ TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_string", "[sqlite][batch][st
 TEST_CASE_METHOD(sqlite_fixture, "test_std_optional", "[sqlite][optional]")
 {
     test_std_optional();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_std_any", "[sqlite][any]")
+{
+    test_std_any();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_std_variant", "[sqlite][variant]")
+{
+    test_std_variant();
 }
 
 TEST_CASE_METHOD(
@@ -243,6 +263,16 @@ TEST_CASE_METHOD(sqlite_fixture, "test_connection_environment", "[sqlite][connec
 TEST_CASE_METHOD(sqlite_fixture, "test_connection_attributes", "[sqlite][connection][attributes]")
 {
     test_connection_attributes();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_connection_per_thread", "[sqlite][connection][threads]")
+{
+    test_connection_per_thread();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_browse_connect_unsupported", "[sqlite][connection][browse]")
+{
+    test_browse_connect_unsupported();
 }
 
 TEST_CASE_METHOD(sqlite_fixture, "test_date", "[sqlite][date]")

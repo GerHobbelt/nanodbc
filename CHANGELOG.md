@@ -1,10 +1,57 @@
 # ChangeLog
 
+## v3.0.2
+
+- Firebird is tested, in a narrow build, its driver taking one row of a bound array and no more. [`#489`](https://github.com/nanodbc/nanodbc/issues/489)
+
+## v3.0.1
+
+- The C++ Core Guidelines checks are answered, closing the code scanning alerts they raised.
+- ClickHouse is tested, in a suite of its own, its driver needing every parameter described first. [`#485`](https://github.com/nanodbc/nanodbc/issues/485)
+
+## v3.0.0
+
+- The documentation's landing page is titled "nanodbc - C++ ODBC wrapper", which fits on one line where the longer wording wrapped, the heading's own anchor link taking up the width that tipped it over.
+- nanodbc requires C++17. C++11 and C++14 are no longer supported, and the conditionals standing in for `std::optional`, `std::variant`, `std::any` and `std::string_view` are gone, the four being there unconditionally. The `NANODBC_HAS_STD_*` macros are still defined, so code asking whether the feature is there keeps compiling.
+- `statement::bind` and `statement::bind_strings` take a `std::optional`, and a vector of them, so an absent value binds as null without a sentry value or an array of flags kept in step with the values. The sentry and flag overloads remain.
+- The observers whose answer is the whole point are `[[nodiscard]]`: `result::next` and the rest of the navigation, `is_null`, `get`, `get_as` and the column accessors, along with `connected`, `rows`, `columns` and `affected_rows`. Discarding one of them was a quiet way to read the wrong row. `execute` and `transact` are left alone, ignoring their result being a fair thing to do.
+- The `attribute` class that stood in for `std::variant` below C++17 is gone, as are the `#else` halves of `statement::attribute` and `connection::attribute` that went with it.
+- CI builds against C++17 and C++20 and the suites run at both; the C++14 jobs are gone. The MinGW job passes the standard its matrix names, having declared one and then configured without it.
+- Internals follow the standard they are now written against: fold expressions where a braced list was standing in for one, `if constexpr` where a pair of `enable_if` overloads differed only by a compile-time condition, `std::optional` read through one trait rather than two, and `using` rather than `typedef`.
+- The documentation build is warning-free again: `PARAM_RETURN`'s comment gave Doxygen a code span it read as two sentences, `JAVADOC_AUTOBRIEF` ending the brief at the `?` inside it, and `doc/README.md` still described the Breathe step that generating the reference with Doxygen replaced.
+- The before and after comparison on the landing page is code rather than two screenshots, so it is highlighted by the same theme as the rest of the site, selectable, searchable and legible at any width. Both halves compile, which the lint run checks: the ODBC one against the ODBC headers rather than Windows-only ones, and the nanodbc one in a narrow build and a Unicode one alike, reading its rows through a range-for rather than counting them.
+- The documentation site and the API reference beside it read as one site. The pages are themed with Furo, whose colours, fonts and sizes `conf.py` sets from doxygen-awesome-css's own custom properties, and the reference follows the reader's system between light and dark the way the pages do, which being pinned light it did not.
+- Describing a parameter and finding a bound column look the key up once rather than twice, `count()` followed by `at()` having asked the same map the same question either side of the answer.
+
+## v2.20.0
+
+- `connection::browse_connect` asks the driver what it needs in order to connect, which SQL Server's answers with the attributes it wants and most others decline. [`#235`](https://github.com/nanodbc/nanodbc/issues/235)
+- `result::get_as` reads a column as the type the driver says it is, into a `std::variant` naming the alternatives to choose between. [`#324`](https://github.com/nanodbc/nanodbc/issues/324)
+- A parameter described with `describe_parameters` can be bound without preparing first, which is what a stored procedure with known parameters wants. [`#207`](https://github.com/nanodbc/nanodbc/issues/207)
+- `cmake-lint` reads the CMake scripts in CI; `cmake-format` is not run, its output rewriting them whole. [`#394`](https://github.com/nanodbc/nanodbc/issues/394)
+- PostgreSQL is tested through its Unicode driver, the ANSI one being unable to take the wide parameter a Unicode build binds. [`#519`](https://github.com/nanodbc/nanodbc/issues/519)
+- `result::get` reads a column into a `std::any`, holding what the column holds, or nothing where it is null. [`#325`](https://github.com/nanodbc/nanodbc/issues/325)
+- Every diagnostic a failure carries reaches the message, where all but the first were dropped outside Windows, and each arrives once rather than trailing the buffer it was read into. [`#315`](https://github.com/nanodbc/nanodbc/issues/315)
+- `result::get_ref` builds the value before reading a column into a `std::optional`, having read into one that held nothing, which crashes for a wide string. [`#525`](https://github.com/nanodbc/nanodbc/issues/525)
+- `statement::parameter_is_null` says whether a parameter bound for output came back null, which its value cannot, the driver leaving the caller's buffer alone. [`#436`](https://github.com/nanodbc/nanodbc/issues/436)
+- The suites run at C++17 as well as C++14, so what is written behind `std::optional` and `std::variant` is executed rather than only compiled. [`#514`](https://github.com/nanodbc/nanodbc/issues/514)
+- A test covers a connection to each of several threads, which is the arrangement the library asks for and nothing exercised. [`#285`](https://github.com/nanodbc/nanodbc/issues/285)
+
 ## v2.19.0
 
 - A date or time parameter bound as text is declared as the driver describes it, Oracle refusing the ODBC literal form when it is declared as text. [`#248`](https://github.com/nanodbc/nanodbc/issues/248)
 - `statement::execute` takes a `batch_ops`, so the rowset size and the parameter array length can differ. [`#162`](https://github.com/nanodbc/nanodbc/issues/162)
 - Documented that how far a batch of parameters carries is the driver's to decide, with measurements. [`#241`](https://github.com/nanodbc/nanodbc/issues/241)
+- Oracle runs in the test suite and in CI, against Oracle Database Free through Instant Client, carrying the cases the other backends share. [`#487`](https://github.com/nanodbc/nanodbc/issues/487)
+- The Oracle job starts a prepared database rather than opening one on first boot, which is most of the difference between three minutes fifty and two minutes five.
+- `bind_rows` binds a batch held as rows, naming one accessor per parameter, and copies the columns into the statement so the rows need not outlive it. [`#443`](https://github.com/nanodbc/nanodbc/issues/443)
+- The constructors taking connection and statement attributes are reachable at C++14, the nested `attribute` having been private there and the `connection` overloads compiled out altogether. [`#494`](https://github.com/nanodbc/nanodbc/issues/494)
+- Connection attributes reach the driver before it connects, which is what several of them govern; setting them on an allocated handle beforehand cannot work, since `connect()` allocates another. [`#215`](https://github.com/nanodbc/nanodbc/issues/215)
+- A test covers reading a result other than forwards, which asks the driver for a cursor that scrolls; `move()` counts rows from one, which it did not say. [`#368`](https://github.com/nanodbc/nanodbc/issues/368)
+- Tests pin down what `affected_rows` reports for the statements whose count is defined, a statement matching nothing included. [`#168`](https://github.com/nanodbc/nanodbc/issues/168)
+- The SQLite and SQL Server suites also run built for Unicode, and SQL Server is tested through the ODBC driver the development container has used for some time. [`#265`](https://github.com/nanodbc/nanodbc/issues/265)
+- `test_std_optional` leaves out its date and time cases on Oracle, which has no TIME type and describes a DATE as a timestamp, as the tests they wrap are already left out there.
+- Documented reading many rows into containers, which is the rowset size and `get_ref` rather than any binding of output buffers. [`#163`](https://github.com/nanodbc/nanodbc/issues/163)
 
 ## v2.18.0
 

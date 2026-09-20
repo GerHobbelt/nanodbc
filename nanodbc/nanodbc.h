@@ -77,6 +77,7 @@
 #ifndef NANODBC_NANODBC_H
 #define NANODBC_NANODBC_H
 
+#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -84,19 +85,22 @@
 #include <iterator>
 #include <list>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
-#if __cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
+// nanodbc requires C++17, so these always hold. They are still defined, so that code
+// written against an earlier release and asking whether the feature is there keeps
+// compiling; new code has no reason to ask.
 #define NANODBC_HAS_STD_STRING_VIEW
-#include <optional>
 #define NANODBC_HAS_STD_OPTIONAL
-#include <variant>
 #define NANODBC_HAS_STD_VARIANT
-#endif
+#define NANODBC_HAS_STD_ANY
 
 /// \brief The entirety of nanodbc can be found within this one namespace.
 ///
@@ -159,63 +163,49 @@ namespace nanodbc
 #ifdef NANODBC_ENABLE_UNICODE
 #ifdef NANODBC_USE_IODBC_WIDE_STRINGS
 #define NANODBC_TEXT(s) U##s
-typedef std::u32string string;
-#ifdef NANODBC_HAS_STD_STRING_VIEW
-typedef std::u32string_view string_view;
-#endif
+using string = std::u32string;
+using string_view = std::u32string_view;
 #else
 #ifdef _MSC_VER
-typedef std::wstring string;
-#ifdef NANODBC_HAS_STD_STRING_VIEW
-typedef std::wstring_view string_view;
-#endif
+using string = std::wstring;
+using string_view = std::wstring_view;
 #define NANODBC_TEXT(s) L##s
 #else
-typedef std::u16string string;
-#ifdef NANODBC_HAS_STD_STRING_VIEW
-typedef std::u16string_view string_view;
-#endif
+using string = std::u16string;
+using string_view = std::u16string_view;
 #define NANODBC_TEXT(s) u##s
 #endif
 #endif
 #else
-typedef std::string string;
-#ifdef NANODBC_HAS_STD_STRING_VIEW
-typedef std::string_view string_view;
-#endif
+using string = std::string;
+using string_view = std::string_view;
 #define NANODBC_TEXT(s) s
 #endif
 
 #ifdef NANODBC_USE_IODBC_WIDE_STRINGS
-typedef std::u32string wide_string;
-#ifdef NANODBC_HAS_STD_STRING_VIEW
-typedef std::u32string_view wide_string_view;
-#endif
+using wide_string = std::u32string;
+using wide_string_view = std::u32string_view;
 #else
 #ifdef _MSC_VER
-typedef std::wstring wide_string;
-#ifdef NANODBC_HAS_STD_STRING_VIEW
-typedef std::wstring_view wide_string_view;
-#endif
+using wide_string = std::wstring;
+using wide_string_view = std::wstring_view;
 #else
-typedef std::u16string wide_string;
-#ifdef NANODBC_HAS_STD_STRING_VIEW
-typedef std::u16string_view wide_string_view;
-#endif
+using wide_string = std::u16string;
+using wide_string_view = std::u16string_view;
 #endif
 #endif
 
-typedef wide_string::value_type wide_char_t;
+using wide_char_t = wide_string::value_type;
 
 #if defined(_WIN64)
 // LLP64 machine: Windows
-typedef std::int64_t null_type;
+using null_type = std::int64_t;
 #elif !defined(_WIN64) && defined(__LP64__)
 // LP64 machine: OS X or Linux
-typedef long null_type;
+using null_type = long;
 #else
 // 32-bit machine
-typedef long null_type;
+using null_type = long;
 #endif
 #else
 /// \def NANODBC_TEXT(s)
@@ -423,7 +413,6 @@ struct timestampoffset
     std::int16_t offset_minute; ///< Minutes part of time zome offset
 };
 
-#ifdef NANODBC_HAS_STD_VARIANT
 /// \brief A class representing a connection or a statement attribute.
 ///
 /// Callers should create attributes using the 3 argument constructor.
@@ -439,10 +428,10 @@ class attribute
 {
 public:
 #ifdef NANODBC_ENABLE_UNICODE
-    typedef std::variant<std::vector<uint8_t>, string, std::string, std::intptr_t, std::uintptr_t>
-        variant;
+    using variant =
+        std::variant<std::vector<uint8_t>, string, std::string, std::intptr_t, std::uintptr_t>;
 #else
-    typedef std::variant<std::vector<uint8_t>, string, std::intptr_t, std::uintptr_t> variant;
+    using variant = std::variant<std::vector<uint8_t>, string, std::intptr_t, std::uintptr_t>;
 #endif
     attribute() = delete;
     attribute& operator=(attribute const&) = delete;
@@ -458,67 +447,87 @@ public:
 
 protected:
     /// \brief Points value_ptr_ at the resource, according to which type it holds.
-    void extractValuePtr();
+    ///
+    /// Visiting a variant that always holds an alternative cannot throw, and the two
+    /// constructors calling this are themselves noexcept.
+    void extractValuePtr() noexcept;
 
     long attribute_;     ///< The Attribute argument of the ODBC call.
     long string_length_; ///< The StringLength argument of the ODBC call.
     variant resource_;   ///< Owns the value that value_ptr_ refers to.
     void* value_ptr_;    ///< The ValuePtr argument of the ODBC call.
 };
-#else
-/// \brief A class representing a connection or a statement attribute.
-///
-/// This is the variant-free form, used where std::variant is unavailable. The caller owns
-/// whatever value_ptr refers to and must keep it alive for as long as the attribute is used.
-///
-/// See https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlsetconnectattr-function
-class attribute
-{
-public:
-    /// \brief Creates an attribute from the three arguments the ODBC call takes.
-    /// \param attribute The Attribute argument of SQLSetConnectAttr or SQLSetStmtAttr.
-    /// \param string_length The StringLength argument.
-    /// \param value_ptr The ValuePtr argument, as an integer or a pointer.
-    attribute(long const& attribute, long const& string_length, std::uintptr_t value_ptr) noexcept
-        : attribute_(attribute)
-        , string_length_(string_length)
-        , value_ptr_((void*)value_ptr) {};
-
-protected:
-    long attribute_;     ///< The Attribute argument of the ODBC call.
-    long string_length_; ///< The StringLength argument of the ODBC call.
-    void* value_ptr_;    ///< The ValuePtr argument of the ODBC call.
-};
-#endif
 
 /// \brief A type trait for testing if a type is a std::basic_string compatible with the current
 /// nanodbc configuration
 template <typename T>
-using is_string = std::integral_constant<
-    bool,
-    std::is_same<typename std::decay<T>::type, std::string>::value ||
-        std::is_same<typename std::decay<T>::type, wide_string>::value
-#ifdef NANODBC_HAS_STD_STRING_VIEW
-        || std::is_same<typename std::decay<T>::type, std::string_view>::value ||
-        std::is_same<typename std::decay<T>::type, wide_string_view>::value
-#endif
-    >;
+using is_string = std::bool_constant<
+    std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, wide_string> ||
+    std::is_same_v<std::decay_t<T>, std::string_view> ||
+    std::is_same_v<std::decay_t<T>, wide_string_view>>;
+
+/// \brief Whether a type is a string compatible with the current nanodbc configuration.
+template <typename T>
+inline constexpr bool is_string_v = is_string<T>::value;
+
+/// \brief A type trait for testing if a type is a string owning the characters it holds.
+///
+/// Unlike is_string, the view types are excluded: they neither own their characters nor
+/// promise a terminating NUL, which is what binding a single value hands to the driver.
+template <typename T>
+using is_owning_string = std::bool_constant<
+    std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, wide_string>>;
+
+/// \brief Whether a type is a string owning the characters it holds.
+template <typename T>
+inline constexpr bool is_owning_string_v = is_owning_string<T>::value;
 
 /// \brief A type trait for testing if a type is a character compatible with the current nanodbc
 /// configuration
 template <typename T>
-using is_character = std::integral_constant<
-    bool,
-    std::is_same<typename std::decay<T>::type, std::string::value_type>::value ||
-        std::is_same<typename std::decay<T>::type, wide_char_t>::value>;
+using is_character = std::bool_constant<
+    std::is_same_v<std::decay_t<T>, std::string::value_type> ||
+    std::is_same_v<std::decay_t<T>, wide_char_t>>;
+
+/// \brief Whether a type is a character compatible with the current nanodbc configuration.
+template <typename T>
+inline constexpr bool is_character_v = is_character<T>::value;
 
 /// \brief Enables an overload only for the string types nanodbc binds as strings.
 template <typename T>
-using enable_if_string = typename std::enable_if<is_string<T>::value>::type;
+using enable_if_string = std::enable_if_t<is_string_v<T>>;
 
 /// \brief Enables an overload only for the character types nanodbc binds as strings.
 template <typename T>
-using enable_if_character = typename std::enable_if<is_character<T>::value>::type;
+using enable_if_character = std::enable_if_t<is_character_v<T>>;
+
+namespace detail
+{
+
+/// \brief Splits optionals into the values themselves and flags saying which are null.
+///
+/// An absent value still takes up its place in the column, so that the values line up with
+/// the flags marking which of them are null. What fills that place is never read.
+///
+/// \param values The optionals to split.
+/// \param column Receives one value per optional, in order.
+/// \return One flag per optional, true where the value was absent.
+template <class T>
+std::unique_ptr<bool[]>
+split_optional(std::vector<std::optional<T>> const& values, std::vector<T>& column)
+{
+    auto nulls = std::make_unique<bool[]>(values.size());
+    column.reserve(values.size());
+    std::size_t i = 0;
+    for (auto const& value : values)
+    {
+        nulls[i++] = !value.has_value();
+        column.push_back(value ? *value : T());
+    }
+    return nulls;
+}
+
+} // namespace detail
 
 /// \}
 
@@ -867,13 +876,10 @@ class statement
 private:
     class statement_impl;
 
-#ifdef NANODBC_HAS_STD_VARIANT
 public:
     class attribute : public nanodbc::attribute
     {
     public:
-        attribute(attribute const& other) noexcept
-            : nanodbc::attribute(other) {};
         attribute(
             long const& attribute,
             long const& string_length,
@@ -883,21 +889,6 @@ public:
     private:
         friend class nanodbc::statement::statement_impl;
     };
-#else
-public:
-    class attribute : public nanodbc::attribute
-    {
-    public:
-        attribute(
-            long const& attribute,
-            long const& string_length,
-            std::uintptr_t value_ptr) noexcept
-            : nanodbc::attribute(attribute, string_length, value_ptr) {};
-
-    private:
-        friend class nanodbc::statement::statement_impl;
-    };
-#endif
 
 public:
     /// \brief Provides support for retrieving output/return parameters.
@@ -907,8 +898,10 @@ public:
         PARAM_IN,    ///< Binding an input parameter.
         PARAM_OUT,   ///< Binding an output parameter.
         PARAM_INOUT, ///< Binding an input/output parameter.
-        PARAM_RETURN ///< Binding a procedure's return value, at parameter zero of a
-                     ///< `{ ? = CALL proc(?) }` escape sequence.
+        /// \brief Binding a procedure's return value.
+        ///
+        /// This is parameter zero of a `{ ? = CALL proc(?) }` escape sequence.
+        PARAM_RETURN
     };
 
 public:
@@ -957,10 +950,10 @@ public:
     void open(class connection& conn);
 
     /// \brief Returns true if connection is open.
-    bool open() const noexcept;
+    [[nodiscard]] bool open() const noexcept;
 
     /// \brief Returns true if connected to the database.
-    bool connected() const noexcept;
+    [[nodiscard]] bool connected() const noexcept;
 
     /// \brief Returns the associated connection object if any.
     class connection& connection() noexcept;
@@ -969,7 +962,7 @@ public:
     const class connection& connection() const noexcept;
 
     /// \brief Returns the native ODBC statement handle.
-    void* native_statement_handle() const noexcept;
+    [[nodiscard]] void* native_statement_handle() const noexcept;
 
     /// \brief Closes the statement and frees all associated resources.
     void close();
@@ -1195,11 +1188,11 @@ public:
 
     /// \brief Returns rows affected by the request or -1 if affected rows is not available.
     /// \throws database_error
-    long affected_rows() const;
+    [[nodiscard]] long affected_rows() const;
 
     /// \brief Returns the number of columns in a result set.
     /// \throws database_error
-    short columns() const;
+    [[nodiscard]] short columns() const;
 
     /// \brief Resets all currently bound parameters.
     void reset_parameters() noexcept;
@@ -1216,6 +1209,19 @@ public:
 
     /// \brief Returns parameter type for indicated parameter placeholder in a prepared statement.
     short parameter_type(short param_index) const;
+
+    /// \brief Whether the parameter came back null.
+    ///
+    /// A parameter bound for output carries an indicator the driver writes when the
+    /// statement runs, saying whether a value came back at all. Reading it tells a null
+    /// apart from a buffer the driver left alone, which the value cannot.
+    ///
+    /// \param param_index Zero-based index of the parameter marker.
+    /// \param batch_index Which of the bound values to ask about, where several were.
+    /// \throws programming_error if nothing is bound to that parameter.
+    /// \throws index_range_error if there is no such value in the batch.
+    /// \see bind(), PARAM_OUT, PARAM_INOUT
+    bool parameter_is_null(short param_index, std::size_t batch_index = 0) const;
 
     /// \addtogroup binding Binding parameters
     /// \brief These functions are used to bind values to ODBC parameters.
@@ -1254,6 +1260,37 @@ public:
     /// \throws database_error
     template <class T>
     void bind(short param_index, T const* value, param_direction direction = PARAM_IN);
+
+    /// \brief Binds a value that may be absent, an absent one being bound as null.
+    ///
+    /// This is the same as bind() followed by bind_null() for the absent case, written so
+    /// that the caller need not tell the two apart. A copy of the value is taken, so the
+    /// optional is free to go out of scope before the statement is executed.
+    ///
+    /// \code
+    /// std::optional<int> const age = lookup();
+    /// stmt.bind(0, age); // the value, or null where there is none
+    /// \endcode
+    ///
+    /// \param param_index Zero-based index of parameter marker (placeholder position).
+    /// \param value The value to bind, or nothing to bind null.
+    /// \param direction ODBC parameter direction.
+    /// \throws database_error
+    /// \see bind(), bind_null()
+    template <class T>
+    void
+    bind(short param_index, std::optional<T> const& value, param_direction direction = PARAM_IN)
+    {
+        if (!value.has_value())
+        {
+            bind_null(param_index, 1);
+            return;
+        }
+        if constexpr (is_owning_string_v<T>)
+            bind(param_index, value->c_str(), direction);
+        else
+            bind(param_index, &*value, direction);
+    }
 
     /// \addtogroup bind_multi Binding multiple non-string values
     /// \brief Binds given values to given parameter placeholder number in the prepared statement.
@@ -1344,6 +1381,33 @@ public:
         std::vector<T> const& values,
         bool const* nulls,
         param_direction direction = PARAM_IN);
+
+    /// \brief Binds a batch of values, any of which may be absent and bound as null.
+    ///
+    /// Where the overload taking a flags array asks the caller to keep the values and the
+    /// flags in step, this reads both out of the one vector. The values are copied, so the
+    /// vector is free to go out of scope before the statement is executed.
+    ///
+    /// \code
+    /// std::vector<std::optional<int>> const ages{31, std::nullopt, 47};
+    /// stmt.bind(0, ages); // the middle row binds null
+    /// \endcode
+    ///
+    /// \param param_index Zero-based index of parameter marker (placeholder position).
+    /// \param values The values to bind, an absent one binding null.
+    /// \param direction ODBC parameter direction.
+    /// \throws database_error
+    /// \see bind_multi
+    template <class T>
+    void bind(
+        short param_index,
+        std::vector<std::optional<T>> const& values,
+        param_direction direction = PARAM_IN)
+    {
+        std::vector<T> column;
+        auto const nulls = detail::split_optional(values, column);
+        bind(param_index, column, nulls.get(), direction);
+    }
 
     /// @}
 
@@ -1480,6 +1544,34 @@ public:
         bind_strings(param_index, param_values, ValueSize, BatchSize, nulls, direction);
     }
 
+    /// \brief Binds a batch of strings, any of which may be absent and bound as null.
+    ///
+    /// Where the overload taking a flags array asks the caller to keep the values and the
+    /// flags in step, this reads both out of the one vector. The strings are copied, so the
+    /// vector is free to go out of scope before the statement is executed.
+    ///
+    /// \code
+    /// std::vector<std::optional<nanodbc::string>> const names{
+    ///     NANODBC_TEXT("ada"), std::nullopt};
+    /// stmt.bind_strings(0, names); // the second row binds null
+    /// \endcode
+    ///
+    /// \param param_index Zero-based index of parameter marker (placeholder position).
+    /// \param values The strings to bind, an absent one binding null.
+    /// \param direction ODBC parameter direction.
+    /// \throws database_error
+    /// \see bind_strings
+    template <class T, typename = enable_if_string<T>>
+    void bind_strings(
+        short param_index,
+        std::vector<std::optional<T>> const& values,
+        param_direction direction = PARAM_IN)
+    {
+        std::vector<T> column;
+        auto const nulls = detail::split_optional(values, column);
+        bind_strings(param_index, column, nulls.get(), direction);
+    }
+
     /// @}
 
     /// \brief Binds null values to the parameter placeholder number in the prepared statement.
@@ -1521,7 +1613,7 @@ public:
         const std::vector<short>& scale);
 
 private:
-    typedef std::function<bool(std::size_t)> null_predicate_type;
+    using null_predicate_type = std::function<bool(std::size_t)>;
     friend class nanodbc::result;
 #ifndef NANODBC_DISABLE_MSSQL_TVP
     friend class nanodbc::table_valued_parameter::table_valued_parameter_impl;
@@ -1551,13 +1643,10 @@ private:
     class connection_impl;
     friend class nanodbc::transaction::transaction_impl;
 
-#ifdef NANODBC_HAS_STD_VARIANT
 public:
     class attribute : public nanodbc::attribute
     {
     public:
-        attribute(attribute const& other) noexcept
-            : nanodbc::attribute(other) {};
         attribute(
             long const& attribute,
             long const& string_length,
@@ -1567,21 +1656,7 @@ public:
     private:
         friend class nanodbc::connection::connection_impl;
     };
-#else
-public:
-    class attribute : public nanodbc::attribute
-    {
-    public:
-        attribute(
-            long const& attribute,
-            long const& string_length,
-            std::uintptr_t value_ptr) noexcept
-            : nanodbc::attribute(attribute, string_length, value_ptr) {};
 
-    private:
-        friend class nanodbc::connection::connection_impl;
-    };
-#endif
 public:
     /// \brief Create new connection object, initially not connected.
     connection();
@@ -1707,6 +1782,24 @@ public:
     /// \throws database_error
     /// \see connected(), attribute
     void connect(string const& connection_string, std::list<attribute> const& attributes);
+
+    /// \brief Asks the driver what it needs in order to connect.
+    ///
+    /// Wraps ODBC's SQLBrowseConnect, which is asked repeatedly. Each call is given what
+    /// is known so far and answers with the attributes it still wants, spelled as a
+    /// connection string of its own: the required ones first, then the optional, with the
+    /// values a driver can enumerate listed in braces. Filling those in and asking again
+    /// carries the exchange forward until the driver has enough, at which point it
+    /// connects, \a more_wanted is false and the returned string is empty.
+    ///
+    /// A driver need not support this, and one that does not raises.
+    ///
+    /// \param connection_string What is known so far, beginning with the driver or DSN.
+    /// \param more_wanted Set to whether the driver is asking for more.
+    /// \return The attributes wanted next, or nothing once connected.
+    /// \throws database_error
+    /// \see connect(), connected()
+    string browse_connect(string const& connection_string, bool& more_wanted);
 #if !defined(NANODBC_DISABLE_ASYNC)
     /// \brief Initiate an asynchronous connection operation to the given data source.
     ///
@@ -1757,19 +1850,19 @@ public:
 #endif
 
     /// \brief Returns true if connected to the database.
-    bool connected() const noexcept;
+    [[nodiscard]] bool connected() const noexcept;
 
     /// \brief Disconnects from the database, but maintains environment and handle resources.
     void disconnect();
 
     /// \brief Returns the number of transactions currently held for this connection.
-    std::size_t transactions() const noexcept;
+    [[nodiscard]] std::size_t transactions() const noexcept;
 
     /// \brief Returns the native ODBC database connection handle.
-    void* native_dbc_handle() const noexcept;
+    [[nodiscard]] void* native_dbc_handle() const noexcept;
 
     /// \brief Returns the native ODBC environment handle.
-    void* native_env_handle() const noexcept;
+    [[nodiscard]] void* native_env_handle() const noexcept;
 
     /// \brief Returns information from the ODBC connection as a string or fixed-size value.
     /// The general information about the driver and data source associated
@@ -1854,14 +1947,14 @@ public:
     void swap(result& rhs) noexcept;
 
     /// \brief Returns the native ODBC statement handle.
-    void* native_statement_handle() const noexcept;
+    [[nodiscard]] void* native_statement_handle() const noexcept;
 
     /// \brief The rowset size for this result set.
-    long rowset_size() const noexcept;
+    [[nodiscard]] long rowset_size() const noexcept;
 
     /// \brief Number of affected rows by the request or -1 if the affected rows is not available.
     /// \throws database_error
-    long affected_rows() const;
+    [[nodiscard]] long affected_rows() const;
 
     /// \brief Reports if number of affected rows is available.
     /// \return true if number of affected rows is known, regardless of the value;
@@ -1874,26 +1967,26 @@ public:
     bool has_affected_rows() const;
 
     /// \brief Rows in the current rowset or 0 if the number of rows is not available.
-    long rows() const noexcept;
+    [[nodiscard]] long rows() const noexcept;
 
     /// \brief Returns the number of columns in a result set.
     /// \throws database_error
-    short columns() const;
+    [[nodiscard]] short columns() const;
 
     /// \brief Fetches the first row in the current result set.
     /// \return true if there are more results or false otherwise.
     /// \throws database_error
-    bool first();
+    [[nodiscard]] bool first();
 
     /// \brief Fetches the last row in the current result set.
     /// \return true if there are more results or false otherwise.
     /// \throws database_error
-    bool last();
+    [[nodiscard]] bool last();
 
     /// \brief Fetches the next row in the current result set.
     /// \return true if there are more results or false otherwise.
     /// \throws database_error
-    bool next();
+    [[nodiscard]] bool next();
 
 #if !defined(NANODBC_DISABLE_ASYNC)
     /// \brief Initiates an asynchronous fetch of the next row in the current result set.
@@ -1911,7 +2004,7 @@ public:
     /// \brief Fetches the prior row in the current result set.
     /// \return true if there are more results or false otherwise.
     /// \throws database_error
-    bool prior();
+    [[nodiscard]] bool prior();
 
     /// \brief Moves to and fetches the specified row in the current result set.
     /// \param row The row to fetch, counted from one.
@@ -1920,12 +2013,12 @@ public:
     /// \attention Fetching anywhere other than forward asks the driver for a cursor that
     ///            scrolls, which ODBC does not give by default. Without one the call fails
     ///            with HY106. \see statement::attribute, SQL_ATTR_CURSOR_TYPE
-    bool move(long row);
+    [[nodiscard]] bool move(long row);
 
     /// \brief Skips a number of rows and then fetches the resulting row in the current result set.
     /// \return true if there are results or false otherwise.
     /// \throws database_error
-    bool skip(long rows);
+    [[nodiscard]] bool skip(long rows);
 
     /// \brief Returns the row position in the current result set.
     unsigned long position() const;
@@ -1978,8 +2071,8 @@ public:
     ///            unsigned long long int, float, double, std::string, wide_string,
     ///            std::string::value_type, wide_string::value_type, date, time,
     ///            timestamp, timestampoffset and std::vector<std::uint8_t> for binary
-    ///            data. Each is also available wrapped in std::optional where the
-    ///            standard library provides it, and _variant_t on MSVC.
+    ///            data. Each is also available wrapped in std::optional, which is how a
+    ///            null column is read without an exception, and _variant_t on MSVC.
     ///
     /// @{
 
@@ -2041,8 +2134,12 @@ public:
     /// \throws index_range_error
     /// \throws type_incompatible_error
     /// \throws null_access_error
+    ///
+    /// T may be std::any, which is filled according to what the column says it holds
+    /// rather than what the caller asks for. A null column gives an any holding nothing.
+    /// \see column_datatype(), get_as()
     template <class T>
-    T get(short column) const;
+    [[nodiscard]] T get(short column) const;
 
     /// \brief Gets data from the given column of the current rowset.
     ///
@@ -2055,7 +2152,34 @@ public:
     /// \throws index_range_error
     /// \throws type_incompatible_error
     template <class T>
-    T get(short column, T const& fallback) const;
+    [[nodiscard]] T get(short column, T const& fallback) const;
+
+    /// \brief Reads a column as whatever it holds, into a type able to hold any of them.
+    ///
+    /// Where get() reads a column as the type the caller names, converting where it can,
+    /// this reads it as the type the column says it is and hands back a T holding that.
+    /// T may be std::any, or a std::variant naming the alternatives to choose between.
+    ///
+    /// A null column gives a T built from nothing: an any holding nothing, or a variant
+    /// on its first alternative, which is what std::monostate is for.
+    ///
+    /// \code
+    /// using v_t = std::variant<std::monostate, nanodbc::string, int>;
+    /// auto v = results.get_as<v_t>(0);
+    /// \endcode
+    ///
+    /// \param column position.
+    /// \throws database_error
+    /// \throws index_range_error
+    /// \throws type_incompatible_error if the column holds something T cannot.
+    /// \see get(), column_datatype()
+    template <class T>
+    [[nodiscard]] T get_as(short column) const;
+
+    /// \brief Reads a column by name as whatever it holds.
+    /// \see get_as(short)
+    template <class T>
+    [[nodiscard]] T get_as(string const& column_name) const;
 
     /// \brief Gets data from the given column by name of the current rowset.
     ///
@@ -2065,7 +2189,7 @@ public:
     /// \throws type_incompatible_error
     /// \throws null_access_error
     template <class T>
-    T get(string const& column_name) const;
+    [[nodiscard]] T get(string const& column_name) const;
 
     /// \brief Gets data from the given column by name of the current rowset.
     ///
@@ -2077,7 +2201,7 @@ public:
     /// \throws index_range_error
     /// \throws type_incompatible_error
     template <class T>
-    T get(string const& column_name, T const& fallback) const;
+    [[nodiscard]] T get(string const& column_name, T const& fallback) const;
 
     /// @}
 
@@ -2102,7 +2226,7 @@ public:
     /// \param column position.
     /// \throws database_error
     /// \throws index_range_error
-    bool is_null(short column) const;
+    [[nodiscard]] bool is_null(short column) const;
 
     /// \brief Returns true if and only if the given column by name of the current rowset is null.
     ///
@@ -2111,7 +2235,7 @@ public:
     /// \param column_name column's name.
     /// \throws database_error
     /// \throws index_range_error
-    bool is_null(string const& column_name) const;
+    [[nodiscard]] bool is_null(string const& column_name) const;
 
     /// \brief Returns true if we have bound a buffer to the given column.
     ///
@@ -2138,24 +2262,24 @@ public:
     /// Columns are numbered from left to right and 0-indexed.
     /// \param column_name column's name.
     /// \throws index_range_error
-    short column(string const& column_name) const;
+    [[nodiscard]] short column(string const& column_name) const;
 
     /// \brief Returns the name of the specified column.
     ///
     /// Columns are numbered from left to right and 0-indexed.
     /// \param column position.
     /// \throws index_range_error
-    string column_name(short column) const;
+    [[nodiscard]] string column_name(short column) const;
 
     /// \brief Returns the size of the specified column.
     ///
     /// Columns are numbered from left to right and 0-indexed.
     /// \param column position.
     /// \throws index_range_error
-    long column_size(short column) const;
+    [[nodiscard]] long column_size(short column) const;
 
     /// \brief Returns the size of the specified column by name.
-    long column_size(string const& column_name) const;
+    [[nodiscard]] long column_size(string const& column_name) const;
 
     /// \brief Returns the number of decimal digits of the specified column.
     ///
@@ -2171,10 +2295,10 @@ public:
     int column_decimal_digits(string const& column_name) const;
 
     /// \brief Returns a identifying integer value representing the SQL type of this column.
-    int column_datatype(short column) const;
+    [[nodiscard]] int column_datatype(short column) const;
 
     /// \brief Returns a identifying integer value representing the SQL type of this column by name.
-    int column_datatype(string const& column_name) const;
+    [[nodiscard]] int column_datatype(string const& column_name) const;
 
     /// \brief Returns data source dependent data type name of this column.
     ///
@@ -2217,7 +2341,7 @@ public:
     bool next_result();
 
     /// \brief If and only if result object is valid, returns true.
-    explicit operator bool() const noexcept;
+    [[nodiscard]] explicit operator bool() const noexcept;
 
 private:
     result(statement statement, long rowset_size);
@@ -2238,11 +2362,11 @@ private:
 class result_iterator
 {
 public:
-    typedef std::input_iterator_tag iterator_category; ///< Category of iterator.
-    typedef result value_type;                         ///< Values returned by iterator access.
-    typedef result* pointer;                           ///< Pointer to iteration values.
-    typedef result& reference;                         ///< Reference to iteration values.
-    typedef std::ptrdiff_t difference_type;            ///< Iterator difference.
+    using iterator_category = std::input_iterator_tag; ///< Category of iterator.
+    using value_type = result;                         ///< Values returned by iterator access.
+    using pointer = result*;                           ///< Pointer to iteration values.
+    using reference = result&;                         ///< Reference to iteration values.
+    using difference_type = std::ptrdiff_t;            ///< Iterator difference.
 
     /// Default iterator; an empty result set.
     result_iterator() = default;
@@ -2508,7 +2632,7 @@ public:
     class tables
     {
     public:
-        bool next();                  ///< Move to the next result in the result set.
+        [[nodiscard]] bool next();    ///< Move to the next result in the result set.
         string table_catalog() const; ///< Fetch table catalog.
         string table_schema() const;  ///< Fetch table schema.
         string table_name() const;    ///< Fetch table name.
@@ -2525,7 +2649,7 @@ public:
     class columns
     {
     public:
-        bool next();                           ///< Move to the next result in the result set.
+        [[nodiscard]] bool next();             ///< Move to the next result in the result set.
         string table_catalog() const;          ///< Fetch table catalog.
         string table_schema() const;           ///< Fetch table schema.
         string table_name() const;             ///< Fetch table name.
@@ -2565,7 +2689,7 @@ public:
     class primary_keys
     {
     public:
-        bool next();                  ///< Move to the next result in the result set.
+        [[nodiscard]] bool next();    ///< Move to the next result in the result set.
         string table_catalog() const; ///< Fetch table catalog.
         string table_schema() const;  ///< Fetch table schema.
         string table_name() const;    ///< Fetch table name.
@@ -2590,7 +2714,7 @@ public:
     class table_privileges
     {
     public:
-        bool next();                  ///< Move to the next result in the result set
+        [[nodiscard]] bool next();    ///< Move to the next result in the result set
         string table_catalog() const; ///< Fetch table catalog.
         string table_schema() const;  ///< Fetch table schema.
         string table_name() const;    ///< Fetch table name.
@@ -2610,7 +2734,7 @@ public:
     class procedures
     {
     public:
-        bool next();                      ///< Move to the next result in the result set.
+        [[nodiscard]] bool next();        ///< Move to the next result in the result set.
         string procedure_catalog() const; ///< Fetch procedure catalog.
         string procedure_schema() const;  ///< Fetch procedure schema.
         string procedure_name() const;    ///< Fetch procedure name.
@@ -2627,7 +2751,7 @@ public:
     class procedure_columns
     {
     public:
-        bool next();                           ///< Move to the next result in the result set.
+        [[nodiscard]] bool next();             ///< Move to the next result in the result set.
         string procedure_catalog() const;      ///< Fetch procedure catalog.
         string procedure_schema() const;       ///< Fetch procedure schema.
         string procedure_name() const;         ///< Fetch procedure name.
@@ -2790,6 +2914,67 @@ private:
 // 888     888    88888888 88888888      888     888  888 888  888 888      888    888 888  888 888  888 "Y8888b.
 // 888     888    Y8b.     Y8b.          888     Y88b 888 888  888 Y88b.    Y88b.  888 Y88..88P 888  888      X88
 // 888     888     "Y8888   "Y8888       888      "Y88888 888  888  "Y8888P  "Y888 888  "Y88P"  888  888  88888P'
+/// \brief Implementation details, not part of the interface.
+namespace detail
+{
+
+// Moves what a column held, which get<std::any>() worked out from the type the driver
+// reports, into whatever the caller asked to hold it.
+template <class T>
+struct hold_column_value;
+
+template <>
+struct hold_column_value<std::any>
+{
+    static std::any from(std::any value) noexcept { return value; }
+};
+
+template <class Alternative, class Variant>
+inline bool hold_alternative(Variant& variant, std::any const& value)
+{
+    if (auto const* held = std::any_cast<Alternative>(&value))
+    {
+        variant = *held;
+        return true;
+    }
+    return false;
+}
+
+template <class... Ts>
+struct hold_column_value<std::variant<Ts...>>
+{
+    static std::variant<Ts...> from(std::any const& value)
+    {
+        std::variant<Ts...> variant;
+        if (!value.has_value())
+            return variant; // the first alternative, which is what monostate is for
+
+        // A disjunction fold, which stops at the first alternative able to hold it.
+        bool const held = (hold_alternative<Ts>(variant, value) || ...);
+
+        // The column holds something none of the alternatives can, which the compiler
+        // cannot catch: what a column holds is only known once the driver has said.
+        if (!held)
+            throw type_incompatible_error();
+
+        return variant;
+    }
+};
+
+} // namespace detail
+
+template <class T>
+T result::get_as(short column) const
+{
+    return detail::hold_column_value<T>::from(get<std::any>(column));
+}
+
+template <class T>
+T result::get_as(string const& column_name) const
+{
+    return get_as<T>(this->column(column_name));
+}
+
 // MARK: Free Functions -
 // clang-format on
 
@@ -2873,8 +3058,8 @@ auto read_field(Row const& row, Accessor const& accessor) -> decltype(accessor(r
 template <class Row, class Accessor>
 struct field_type
 {
-    using type = typename std::decay<
-        decltype(read_field(std::declval<Row const&>(), std::declval<Accessor const&>()))>::type;
+    using type = std::decay_t<
+        decltype(read_field(std::declval<Row const&>(), std::declval<Accessor const&>()))>;
 };
 
 template <class T>
@@ -2882,27 +3067,13 @@ struct is_optional : std::false_type
 {
 };
 
-#ifdef NANODBC_HAS_STD_OPTIONAL
 template <class T>
 struct is_optional<std::optional<T>> : std::true_type
 {
 };
-#endif
 
 template <class T>
-struct is_bindable_string : std::false_type
-{
-};
-
-template <>
-struct is_bindable_string<std::string> : std::true_type
-{
-};
-
-template <>
-struct is_bindable_string<wide_string> : std::true_type
-{
-};
+inline constexpr bool is_optional_v = is_optional<T>::value;
 
 // Four ways to bind a column, told apart by what the accessor yields.
 struct bind_as_value
@@ -2918,23 +3089,20 @@ struct bind_as_optional_string
 {
 };
 
-template <class T, bool IsOptional = is_optional<T>::value>
+template <class T, bool IsOptional = is_optional_v<T>>
 struct bind_kind
 {
-    using type = typename std::
-        conditional<is_bindable_string<T>::value, bind_as_string, bind_as_value>::type;
+    using type = std::conditional_t<is_owning_string_v<T>, bind_as_string, bind_as_value>;
 };
 
-#ifdef NANODBC_HAS_STD_OPTIONAL
 template <class T>
 struct bind_kind<T, true>
 {
-    using type = typename std::conditional<
-        is_bindable_string<typename T::value_type>::value,
+    using type = std::conditional_t<
+        is_owning_string_v<typename T::value_type>,
         bind_as_optional_string,
-        bind_as_optional_value>::type;
+        bind_as_optional_value>;
 };
-#endif
 
 template <class Rows, class Accessor>
 void bind_column(
@@ -2968,13 +3136,12 @@ void bind_column(
     stmt.bind_strings(param_index, column);
 }
 
-#ifdef NANODBC_HAS_STD_OPTIONAL
 // An absent value still occupies its place in the column, so that the values line up with
 // the flags marking which of them are null.
 template <class Rows, class Accessor, class Column>
 std::unique_ptr<bool[]> gather_optional(Rows const& rows, Accessor const& accessor, Column& column)
 {
-    std::unique_ptr<bool[]> nulls(new bool[rows.size()]);
+    auto nulls = std::make_unique<bool[]>(rows.size());
     std::size_t i = 0;
     for (auto const& row : rows)
     {
@@ -3014,7 +3181,6 @@ void bind_column(
     auto const nulls = gather_optional(rows, accessor, column);
     stmt.bind_strings(param_index, column, nulls.get());
 }
-#endif
 
 template <class Rows, class Accessor>
 void bind_one(statement& stmt, short param_index, Rows const& rows, Accessor const& accessor)
@@ -3045,8 +3211,7 @@ void bind_one(statement& stmt, short param_index, Rows const& rows, Accessor con
 /// execute(stmt, people.size());
 /// \endcode
 ///
-/// Where the library is built as C++17 or later, an accessor yielding std::optional binds
-/// an absent value as null.
+/// An accessor yielding std::optional binds an absent value as null.
 ///
 /// The values are copied into the statement, so the rows are free to go out of scope
 /// before it is executed.
@@ -3060,10 +3225,9 @@ template <class Rows, class... Accessors>
 void bind_rows(statement& stmt, Rows const& rows, Accessors const&... accessors)
 {
     short param_index = 0;
-    // Expanded through a braced list, which C++14 orders left to right where a fold
-    // expression is not yet available.
-    int const sequence[] = {0, (detail::bind_one(stmt, param_index++, rows, accessors), 0)...};
-    (void)sequence;
+    // A comma fold, which is ordered left to right, so the accessors line up with the
+    // parameter markers in the order they were named.
+    (detail::bind_one(stmt, param_index++, rows, accessors), ...);
 }
 
 /// \brief Execute the previously prepared query now.

@@ -5,11 +5,6 @@
 // Generated with http://patorjk.com/software/taag/#p=display&v=0&f=Colossal
 
 #if defined(_MSC_VER)
-#if _MSC_VER <= 1800
-// silence spurious Visual C++ warnings
-#pragma warning(disable : 4244) // warning about integer conversion issues.
-#pragma warning(disable : 4312) // warning about 64-bit portability issues.
-#endif
 #pragma warning(disable : 4996) // warning about deprecated declaration
 #endif
 
@@ -22,6 +17,7 @@
 #include <cstring>
 #include <ctime>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <locale>
 #include <map>
@@ -30,24 +26,6 @@
 
 #ifndef __clang__
 #include <cstdint>
-#endif
-
-#ifdef NANODBC_HAS_STD_OPTIONAL
-template <class T>
-inline static void opt_reset(std::optional<T>& opt)
-{
-    opt.reset();
-    return;
-}
-template <typename T, typename Enable = void>
-struct is_optional : std::false_type
-{
-};
-
-template <typename T>
-struct is_optional<std::optional<T>> : std::true_type
-{
-};
 #endif
 
 // User may redefine NANODBC_ASSERT macro in nanodbc/nanodbc.h
@@ -335,15 +313,7 @@ constexpr bool success(RETCODE rc) noexcept
 }
 #endif
 
-#if __cpp_lib_nonmember_container_access >= 201411 || _MSC_VER
 using std::size;
-#else
-template <class T, std::size_t N>
-constexpr std::size_t size(const T (&array)[N]) noexcept
-{
-    return N;
-}
-#endif
 
 template <std::size_t N>
 inline std::size_t size(NANODBC_SQLCHAR const (&array)[N]) noexcept
@@ -400,19 +370,18 @@ inline void append_as_utf8(char32_t cp, std::string& out)
     }
 }
 
-// Appends to a UTF-32 string, where every code point is one unit.
-template <class T, typename std::enable_if<sizeof(T) == 4, int>::type = 0>
+// Appends to a wide string: UTF-32, where every code point is one unit, or UTF-16, which
+// splits anything past the basic plane into a surrogate pair.
+template <class T>
 inline void append_as_wide(char32_t cp, std::basic_string<T>& out)
 {
-    out.push_back(static_cast<T>(cp));
-}
+    static_assert(sizeof(T) == 2 || sizeof(T) == 4, "a wide character is UTF-16 or UTF-32");
 
-// Appends to a UTF-16 string, splitting anything past the basic plane into a surrogate
-// pair.
-template <class T, typename std::enable_if<sizeof(T) == 2, int>::type = 0>
-inline void append_as_wide(char32_t cp, std::basic_string<T>& out)
-{
-    if (cp < 0x10000)
+    if constexpr (sizeof(T) == 4)
+    {
+        out.push_back(static_cast<T>(cp));
+    }
+    else if (cp < 0x10000)
     {
         out.push_back(static_cast<T>(cp));
     }
@@ -478,34 +447,37 @@ inline char32_t next_utf8_code_point(char const*& beg, char const* end)
     return cp;
 }
 
-// Reads one code point from UTF-32.
-template <class T, typename std::enable_if<sizeof(T) == 4, int>::type = 0>
-inline char32_t next_wide_code_point(T const*& beg, T const*)
+// Reads one code point from a wide string: from UTF-32, where it is one unit, or from
+// UTF-16, joining a surrogate pair back together.
+template <class T>
+inline char32_t next_wide_code_point(T const*& beg, [[maybe_unused]] T const* end)
 {
-    auto const cp = static_cast<char32_t>(*beg++);
-    if (!is_valid_code_point(cp))
-        throw_invalid_encoding();
-    return cp;
-}
+    static_assert(sizeof(T) == 2 || sizeof(T) == 4, "a wide character is UTF-16 or UTF-32");
 
-// Reads one code point from UTF-16, joining a surrogate pair back together.
-template <class T, typename std::enable_if<sizeof(T) == 2, int>::type = 0>
-inline char32_t next_wide_code_point(T const*& beg, T const* end)
-{
-    char32_t const unit = static_cast<char16_t>(*beg++);
-    if (unit < 0xD800 || unit > 0xDFFF)
-        return unit;
+    if constexpr (sizeof(T) == 4)
+    {
+        auto const cp = static_cast<char32_t>(*beg++);
+        if (!is_valid_code_point(cp))
+            throw_invalid_encoding();
+        return cp;
+    }
+    else
+    {
+        char32_t const unit = static_cast<char16_t>(*beg++);
+        if (unit < 0xD800 || unit > 0xDFFF)
+            return unit;
 
-    // A low surrogate cannot lead, and a high surrogate must be followed by a low one.
-    if (unit >= 0xDC00 || beg == end)
-        throw_invalid_encoding();
+        // A low surrogate cannot lead, and a high surrogate must be followed by a low one.
+        if (unit >= 0xDC00 || beg == end)
+            throw_invalid_encoding();
 
-    char32_t const trail = static_cast<char16_t>(*beg);
-    if (trail < 0xDC00 || trail > 0xDFFF)
-        throw_invalid_encoding();
-    ++beg;
+        char32_t const trail = static_cast<char16_t>(*beg);
+        if (trail < 0xDC00 || trail > 0xDFFF)
+            throw_invalid_encoding();
+        ++beg;
 
-    return 0x10000 + ((unit - 0xD800) << 10) + (trail - 0xDC00);
+        return 0x10000 + ((unit - 0xD800) << 10) + (trail - 0xDC00);
+    }
 }
 
 template <class T>
@@ -777,22 +749,19 @@ namespace
 using namespace std; // if int64_t is in std namespace (in c++11)
 
 template <typename T>
-using is_integral8 = std::integral_constant<
-    bool,
-    std::is_integral<T>::value && sizeof(T) == 1 && !std::is_same<T, char>::value>;
+inline constexpr bool is_integral8_v =
+    std::is_integral_v<T> && sizeof(T) == 1 && !std::is_same_v<T, char>;
 
 template <typename T>
-using is_integral16 = std::integral_constant<
-    bool,
-    std::is_integral<T>::value && sizeof(T) == 2 && !std::is_same<T, wchar_t>::value>;
+inline constexpr bool is_integral16_v =
+    std::is_integral_v<T> && sizeof(T) == 2 && !std::is_same_v<T, wchar_t>;
 
 template <typename T>
-using is_integral32 = std::integral_constant<
-    bool,
-    std::is_integral<T>::value && sizeof(T) == 4 && !std::is_same<T, wchar_t>::value>;
+inline constexpr bool is_integral32_v =
+    std::is_integral_v<T> && sizeof(T) == 4 && !std::is_same_v<T, wchar_t>;
 
 template <typename T>
-using is_integral64 = std::integral_constant<bool, std::is_integral<T>::value && sizeof(T) == 8>;
+inline constexpr bool is_integral64_v = std::is_integral_v<T> && sizeof(T) == 8;
 
 // A utility for calculating the ctype from the given type T.
 // I essentially create a lookup table based on the MSDN ODBC documentation.
@@ -808,131 +777,115 @@ struct sql_ctype<bool>
     // ODBC represents SQL_C_BIT as a single byte holding 0 or 1, which matches the
     // representation of bool on every platform nanodbc supports.
     static_assert(sizeof(bool) == 1, "binding bool as SQL_C_BIT requires a single byte bool");
-    static const SQLSMALLINT value = SQL_C_BIT;
+    static constexpr SQLSMALLINT value = SQL_C_BIT;
 };
 
 template <typename T>
-struct sql_ctype<
-    T,
-    typename std::enable_if<is_integral8<T>::value && std::is_signed<T>::value>::type>
+struct sql_ctype<T, std::enable_if_t<is_integral8_v<T> && std::is_signed_v<T>>>
 {
-    static const SQLSMALLINT value = SQL_C_STINYINT;
+    static constexpr SQLSMALLINT value = SQL_C_STINYINT;
 };
 
 template <typename T>
-struct sql_ctype<
-    T,
-    typename std::enable_if<is_integral8<T>::value && std::is_unsigned<T>::value>::type>
+struct sql_ctype<T, std::enable_if_t<is_integral8_v<T> && std::is_unsigned_v<T>>>
 {
-    static const SQLSMALLINT value = SQL_C_UTINYINT;
+    static constexpr SQLSMALLINT value = SQL_C_UTINYINT;
 };
 
 template <typename T>
-struct sql_ctype<
-    T,
-    typename std::enable_if<is_integral16<T>::value && std::is_signed<T>::value>::type>
+struct sql_ctype<T, std::enable_if_t<is_integral16_v<T> && std::is_signed_v<T>>>
 {
-    static const SQLSMALLINT value = SQL_C_SSHORT;
+    static constexpr SQLSMALLINT value = SQL_C_SSHORT;
 };
 
 template <typename T>
-struct sql_ctype<
-    T,
-    typename std::enable_if<is_integral16<T>::value && std::is_unsigned<T>::value>::type>
+struct sql_ctype<T, std::enable_if_t<is_integral16_v<T> && std::is_unsigned_v<T>>>
 {
-    static const SQLSMALLINT value = SQL_C_USHORT;
+    static constexpr SQLSMALLINT value = SQL_C_USHORT;
 };
 
 template <typename T>
-struct sql_ctype<
-    T,
-    typename std::enable_if<is_integral32<T>::value && std::is_signed<T>::value>::type>
+struct sql_ctype<T, std::enable_if_t<is_integral32_v<T> && std::is_signed_v<T>>>
 {
-    static const SQLSMALLINT value = SQL_C_SLONG;
+    static constexpr SQLSMALLINT value = SQL_C_SLONG;
 };
 
 template <typename T>
-struct sql_ctype<
-    T,
-    typename std::enable_if<is_integral32<T>::value && std::is_unsigned<T>::value>::type>
+struct sql_ctype<T, std::enable_if_t<is_integral32_v<T> && std::is_unsigned_v<T>>>
 {
-    static const SQLSMALLINT value = SQL_C_ULONG;
+    static constexpr SQLSMALLINT value = SQL_C_ULONG;
 };
 
 template <typename T>
-struct sql_ctype<
-    T,
-    typename std::enable_if<is_integral64<T>::value && std::is_signed<T>::value>::type>
+struct sql_ctype<T, std::enable_if_t<is_integral64_v<T> && std::is_signed_v<T>>>
 {
-    static const SQLSMALLINT value = SQL_C_SBIGINT;
+    static constexpr SQLSMALLINT value = SQL_C_SBIGINT;
 };
 
 template <typename T>
-struct sql_ctype<
-    T,
-    typename std::enable_if<is_integral64<T>::value && std::is_unsigned<T>::value>::type>
+struct sql_ctype<T, std::enable_if_t<is_integral64_v<T> && std::is_unsigned_v<T>>>
 {
-    static const SQLSMALLINT value = SQL_C_UBIGINT;
+    static constexpr SQLSMALLINT value = SQL_C_UBIGINT;
 };
 
 template <>
 struct sql_ctype<float>
 {
-    static const SQLSMALLINT value = SQL_C_FLOAT;
+    static constexpr SQLSMALLINT value = SQL_C_FLOAT;
 };
 
 template <>
 struct sql_ctype<double>
 {
-    static const SQLSMALLINT value = SQL_C_DOUBLE;
+    static constexpr SQLSMALLINT value = SQL_C_DOUBLE;
 };
 
 template <>
 struct sql_ctype<wide_string::value_type>
 {
-    static const SQLSMALLINT value = SQL_C_WCHAR;
+    static constexpr SQLSMALLINT value = SQL_C_WCHAR;
 };
 
 template <>
 struct sql_ctype<wide_string>
 {
-    static const SQLSMALLINT value = SQL_C_WCHAR;
+    static constexpr SQLSMALLINT value = SQL_C_WCHAR;
 };
 
 template <>
 struct sql_ctype<std::string::value_type>
 {
-    static const SQLSMALLINT value = SQL_C_CHAR;
+    static constexpr SQLSMALLINT value = SQL_C_CHAR;
 };
 
 template <>
 struct sql_ctype<std::string>
 {
-    static const SQLSMALLINT value = SQL_C_CHAR;
+    static constexpr SQLSMALLINT value = SQL_C_CHAR;
 };
 
 template <>
 struct sql_ctype<nanodbc::date>
 {
-    static const SQLSMALLINT value = SQL_C_DATE;
+    static constexpr SQLSMALLINT value = SQL_C_DATE;
 };
 
 template <>
 struct sql_ctype<nanodbc::time>
 {
-    static const SQLSMALLINT value = SQL_C_TIME;
+    static constexpr SQLSMALLINT value = SQL_C_TIME;
 };
 
 template <>
 struct sql_ctype<nanodbc::timestamp>
 {
-    static const SQLSMALLINT value = SQL_C_TIMESTAMP;
+    static constexpr SQLSMALLINT value = SQL_C_TIMESTAMP;
 };
 
 template <>
 struct sql_ctype<nanodbc::timestampoffset>
 {
-    static const SQLSMALLINT value = SQL_C_BINARY;
+    static constexpr SQLSMALLINT value = SQL_C_BINARY;
 };
 
 // Encapsulates resources needed for column binding.
@@ -1179,7 +1132,6 @@ inline std::string render_floating_point(T value)
 } // namespace
 
 // nanodbc::attribute
-#ifdef NANODBC_HAS_STD_VARIANT
 namespace nanodbc
 {
 attribute::attribute(
@@ -1201,7 +1153,7 @@ attribute::attribute(attribute const& other) noexcept
 {
     this->extractValuePtr();
 }
-void attribute::extractValuePtr()
+void attribute::extractValuePtr() noexcept
 {
     std::visit(
         [this](auto&& arg)
@@ -1222,7 +1174,6 @@ void attribute::extractValuePtr()
         this->resource_);
 }
 } // namespace nanodbc
-#endif
 
 // clang-format off
 //  .d8888b.                                               888    d8b                             8888888                        888
@@ -1583,6 +1534,58 @@ public:
         return rc;
     }
 
+    // SQLBrowseConnect is asked the same question repeatedly, each answer carrying more
+    // of what the driver wants, so the handle has to live across the calls. connect()
+    // frees and allocates one every time, which would lose the exchange halfway.
+    string browse(string const& connection_string, bool& more_wanted)
+    {
+        allocate_env_handle(env_);
+        if (dbc_ == nullptr)
+            allocate_dbc_handle(dbc_, env_);
+
+        RETCODE rc = SQL_SUCCESS;
+        std::vector<NANODBC_SQLCHAR> out(1024);
+        SQLSMALLINT length = 0;
+
+        NANODBC_CALL_RC(
+            NANODBC_FUNC(SQLBrowseConnect),
+            rc,
+            dbc_,
+            (NANODBC_SQLCHAR*)connection_string.c_str(),
+            SQL_NTS,
+            out.data(),
+            (SQLSMALLINT)out.size(),
+            &length);
+
+        // A driver wanting more room than was offered says so, and says how much.
+        if (rc == SQL_SUCCESS_WITH_INFO && length > (SQLSMALLINT)out.size())
+        {
+            out.resize(static_cast<std::size_t>(length) + 1);
+            NANODBC_CALL_RC(
+                NANODBC_FUNC(SQLBrowseConnect),
+                rc,
+                dbc_,
+                (NANODBC_SQLCHAR*)connection_string.c_str(),
+                SQL_NTS,
+                out.data(),
+                (SQLSMALLINT)out.size(),
+                &length);
+        }
+
+        if (rc == SQL_NEED_DATA)
+        {
+            more_wanted = true;
+            return string(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(length));
+        }
+
+        if (!success(rc))
+            NANODBC_THROW_DATABASE_ERROR(dbc_, SQL_HANDLE_DBC);
+
+        more_wanted = false;
+        connected_ = true;
+        return string();
+    }
+
     bool connected() const noexcept { return connected_; }
 
     void disconnect()
@@ -1650,10 +1653,10 @@ public:
     void rollback(bool onoff) noexcept { rollback_ = onoff; }
 
 private:
-    template <class T, typename std::enable_if<!is_string<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<!is_string<T>::value, int> = 0>
     T get_info_impl(short info_type) const;
 
-    template <class T, typename std::enable_if<is_string<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<is_string<T>::value, int> = 0>
     T get_info_impl(short info_type) const;
 
     HENV env_;
@@ -1663,7 +1666,7 @@ private:
     bool rollback_; // if true, this connection is marked for eventual transaction rollback
 };
 
-template <class T, typename std::enable_if<!is_string<T>::value, int>::type>
+template <class T, std::enable_if_t<!is_string<T>::value, int>>
 T connection::connection_impl::get_info_impl(short info_type) const
 {
     T value = 0;
@@ -1674,7 +1677,7 @@ T connection::connection_impl::get_info_impl(short info_type) const
     return value;
 }
 
-template <class T, typename std::enable_if<is_string<T>::value, int>::type>
+template <class T, std::enable_if_t<is_string<T>::value, int>>
 T connection::connection_impl::get_info_impl(short info_type) const
 {
     NANODBC_SQLCHAR value[1024] = {0};
@@ -2474,9 +2477,10 @@ public:
 
     unsigned long parameter_size(short param_index)
     {
-        if (param_descr_data_.count(param_index))
+        if (auto const described = param_descr_data_.find(param_index);
+            described != param_descr_data_.end())
         {
-            return static_cast<unsigned long>(param_descr_data_.at(param_index).size_);
+            return static_cast<unsigned long>(described->second.size_);
         }
 
         describe_parameters(param_index);
@@ -2488,9 +2492,10 @@ public:
 
     short parameter_scale(short param_index)
     {
-        if (param_descr_data_.count(param_index))
+        if (auto const described = param_descr_data_.find(param_index);
+            described != param_descr_data_.end())
         {
-            return static_cast<short>(param_descr_data_.at(param_index).scale_);
+            return static_cast<short>(described->second.scale_);
         }
 
         describe_parameters(param_index);
@@ -2500,9 +2505,10 @@ public:
 
     short parameter_type(short param_index)
     {
-        if (param_descr_data_.count(param_index))
+        if (auto const described = param_descr_data_.find(param_index);
+            described != param_descr_data_.end())
         {
-            return static_cast<short>(param_descr_data_.at(param_index).type_);
+            return static_cast<short>(described->second.type_);
         }
 
         describe_parameters(param_index);
@@ -2532,6 +2538,17 @@ public:
         }
     }
 
+    bool parameter_is_null(short param_index, std::size_t batch_index) const
+    {
+        auto const indicators = bind_len_or_null_.find(param_index);
+        if (indicators == bind_len_or_null_.end())
+            throw programming_error("no value is bound to that parameter");
+        if (batch_index >= indicators->second.size())
+            throw index_range_error();
+
+        return indicators->second[batch_index] == SQL_NULL_DATA;
+    }
+
     // initializes bind_len_or_null_ and gets information for bind
     void prepare_bind(
         short param_index,
@@ -2545,31 +2562,33 @@ public:
         disable_async();
 #endif
 
-        if (!param_descr_data_.count(param_index))
+        if (param_descr_data_.find(param_index) == param_descr_data_.end())
         {
             describe_parameters(param_index);
         }
+        auto const& described = param_descr_data_[param_index];
         param.index_ = param_index;
-        param.type_ = param_descr_data_[param_index].type_;
-        param.size_ = param_descr_data_[param_index].size_;
-        param.scale_ = param_descr_data_[param_index].scale_;
+        param.type_ = described.type_;
+        param.size_ = described.size_;
+        param.scale_ = described.scale_;
         param.iotype_ = param_type_from_direction(direction);
 
-        if (!bind_len_or_null_.count(param_index))
-            bind_len_or_null_[param_index] = std::vector<null_type>();
-        std::vector<null_type>().swap(bind_len_or_null_[param_index]);
+        // What was bound before is dropped rather than grown into, so a shorter batch does
+        // not leave the tail of a longer one behind it.
+        auto& indicators = bind_len_or_null_[param_index];
+        std::vector<null_type>().swap(indicators);
 
         // ODBC weirdness: this must be at least 8 elements in size
         const std::size_t indicator_size = batch_size > 8 ? batch_size : 8;
-        bind_len_or_null_[param_index].reserve(indicator_size);
-        bind_len_or_null_[param_index].assign(indicator_size, SQL_NULL_DATA);
+        indicators.reserve(indicator_size);
+        indicators.assign(indicator_size, SQL_NULL_DATA);
 
         NANODBC_ASSERT(param.index_ == param_index);
         NANODBC_ASSERT(param.iotype_ > 0);
     }
 
     // calls actual ODBC bind parameter function
-    template <class T, typename std::enable_if<!is_character<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<!is_character<T>::value, int> = 0>
     void bind_parameter(bound_parameter const& param, bound_buffer<T>& buffer)
     {
         NANODBC_ASSERT(buffer.value_size_ > 0 || param.size_ > 0);
@@ -2620,7 +2639,7 @@ public:
 
     // Supports code like: query.bind(0, std_string.c_str())
     // In this case, we need to pass nullptr to the final parameter of SQLBindParameter().
-    template <class T, typename std::enable_if<is_character<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<is_character<T>::value, int> = 0>
     void bind_parameter(bound_parameter const& param, bound_buffer<T>& buffer)
     {
 #ifndef NANODBC_DISABLE_MSSQL_TVP
@@ -3287,35 +3306,32 @@ public:
     {
         NANODBC_ASSERT(param_index >= 0);
 
-        if (!param_descr_data_.count(param_index))
-        {
+        auto const described = param_descr_data_.find(param_index);
+        if (described == param_descr_data_.end())
             throw programming_error("invalid param index");
-        }
-        else
-        {
-            param.type_ = param_descr_data_[param_index].type_;
-            param.size_ = param_descr_data_[param_index].size_;
-            param.scale_ = param_descr_data_[param_index].scale_;
-        }
 
+        param.type_ = described->second.type_;
+        param.size_ = described->second.size_;
+        param.scale_ = described->second.scale_;
         param.index_ = param_index;
         param.iotype_ = SQL_PARAM_INPUT;
 
-        if (!bind_len_or_null_.count(param_index))
-            bind_len_or_null_[param_index] = std::vector<null_type>();
-        std::vector<null_type>().swap(bind_len_or_null_[param_index]);
+        // What was bound before is dropped rather than grown into, so a shorter batch does
+        // not leave the tail of a longer one behind it.
+        auto& indicators = bind_len_or_null_[param_index];
+        std::vector<null_type>().swap(indicators);
 
         // ODBC weirdness: this must be at least 8 elements in size
         const std::size_t indicator_size = batch_size > 8 ? batch_size : 8;
-        bind_len_or_null_[param_index].reserve(indicator_size);
-        bind_len_or_null_[param_index].assign(indicator_size, SQL_NULL_DATA);
+        indicators.reserve(indicator_size);
+        indicators.assign(indicator_size, SQL_NULL_DATA);
 
         NANODBC_ASSERT(param.index_ == param_index);
         NANODBC_ASSERT(param.iotype_ > 0);
     }
 
     // calls actual ODBC bind parameter function
-    template <class T, typename std::enable_if<!is_character<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<!is_character<T>::value, int> = 0>
     void bind_parameter(bound_parameter const& param, bound_buffer<T>& buffer)
     {
         NANODBC_ASSERT(buffer.value_size_ > 0 || param.size_ > 0);
@@ -3364,7 +3380,7 @@ public:
 
     // Supports code like: query.bind(0, std_string.c_str())
     // In this case, we need to pass nullptr to the final parameter of SQLBindParameter().
-    template <class T, typename std::enable_if<is_character<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<is_character<T>::value, int> = 0>
     void bind_parameter(bound_parameter const& param, bound_buffer<T>& buffer)
     {
         auto const buffer_size = buffer.value_size_ > 0 ? buffer.value_size_ : param.size_;
@@ -3519,9 +3535,10 @@ public:
 
     unsigned long parameter_size(short param_index)
     {
-        if (param_descr_data_.count(param_index))
+        if (auto const described = param_descr_data_.find(param_index);
+            described != param_descr_data_.end())
         {
-            return static_cast<unsigned long>(param_descr_data_.at(param_index).size_);
+            return static_cast<unsigned long>(described->second.size_);
         }
 
         prepare_tvp_param_all();
@@ -3533,9 +3550,10 @@ public:
 
     short parameter_scale(short param_index)
     {
-        if (param_descr_data_.count(param_index))
+        if (auto const described = param_descr_data_.find(param_index);
+            described != param_descr_data_.end())
         {
-            return static_cast<short>(param_descr_data_.at(param_index).scale_);
+            return static_cast<short>(described->second.scale_);
         }
 
         prepare_tvp_param_all();
@@ -3546,9 +3564,10 @@ public:
 
     short parameter_type(short param_index)
     {
-        if (param_descr_data_.count(param_index))
+        if (auto const described = param_descr_data_.find(param_index);
+            described != param_descr_data_.end())
         {
-            return static_cast<short>(param_descr_data_.at(param_index).type_);
+            return static_cast<short>(described->second.type_);
         }
 
         prepare_tvp_param_all();
@@ -4081,10 +4100,10 @@ public:
 
     short column(string const& column_name) const
     {
-        auto i = bound_columns_by_name_.find(column_name);
-        if (i == bound_columns_by_name_.end())
-            throw index_range_error();
-        return i->second->column_;
+        if (auto const bound = bound_columns_by_name_.find(column_name);
+            bound != bound_columns_by_name_.end())
+            return bound->second->column_;
+        throw index_range_error();
     }
 
     string column_name(short column) const
@@ -4251,46 +4270,38 @@ public:
         unbind(column);
     }
 
-    template <
-        class T
-#ifdef NANODBC_HAS_STD_OPTIONAL
-        ,
-        std::enable_if_t<!is_optional<T>::value, int> = 0
-#endif
-        >
+    template <class T>
     void get_ref(short column, T& result) const
     {
         throw_if_column_is_out_of_range(column);
-        if (is_null(column))
-            throw null_access_error();
-        get_ref_impl<T>(column, result);
-
-        // An unbound column's null is only known once SQLGetData has run.
-        if (is_null(column))
-            throw null_access_error();
-    }
-
-#ifdef NANODBC_HAS_STD_OPTIONAL
-    template <class T, std::enable_if_t<is_optional<T>::value, int> = 0>
-    void get_ref(short column, T& result) const
-    {
-        throw_if_column_is_out_of_range(column);
-        if (is_null(column))
+        if constexpr (detail::is_optional_v<T>)
         {
-            opt_reset(result);
-            return;
-        }
-        // The value has to exist before it can be read into. An optional holding nothing
-        // has storage for one but has not built it, and writing into what is not there is
-        // undefined however well it may appear to work for a type that is trivial.
-        result.emplace();
-        get_ref_impl<std::remove_reference_t<decltype(*result)>>(column, *result);
+            if (is_null(column))
+            {
+                result.reset();
+                return;
+            }
+            // The value has to exist before it can be read into. An optional holding nothing
+            // has storage for one but has not built it, and writing into what is not there is
+            // undefined however well it may appear to work for a type that is trivial.
+            result.emplace();
+            get_ref_impl<typename T::value_type>(column, *result);
 
-        // An unbound column's null is only known once SQLGetData has run.
-        if (is_null(column))
-            opt_reset(result);
+            // An unbound column's null is only known once SQLGetData has run.
+            if (is_null(column))
+                result.reset();
+        }
+        else
+        {
+            if (is_null(column))
+                throw null_access_error();
+            get_ref_impl<T>(column, result);
+
+            // An unbound column's null is only known once SQLGetData has run.
+            if (is_null(column))
+                throw null_access_error();
+        }
     }
-#endif
 
     template <class T>
     void get_ref(short column, T const& fallback, T& result) const
@@ -4313,44 +4324,36 @@ public:
         }
     }
 
-    template <
-        class T
-#ifdef NANODBC_HAS_STD_OPTIONAL
-        ,
-        std::enable_if_t<!is_optional<T>::value, int> = 0
-#endif
-        >
+    template <class T>
     void get_ref(string const& column_name, T& result) const
     {
         short const column = this->column(column_name);
-        if (is_null(column))
-            throw null_access_error();
-        get_ref_impl<T>(column, result);
-
-        // An unbound column's null is only known once SQLGetData has run.
-        if (is_null(column))
-            throw null_access_error();
-    }
-
-#ifdef NANODBC_HAS_STD_OPTIONAL
-    template <class T, std::enable_if_t<is_optional<T>::value, int> = 0>
-    void get_ref(string const& column_name, T& result) const
-    {
-        short const column = this->column(column_name);
-        if (is_null(column))
+        if constexpr (detail::is_optional_v<T>)
         {
-            opt_reset(result);
-            return;
-        }
-        // As above: the value is built before it is read into.
-        result.emplace();
-        get_ref_impl<std::remove_reference_t<decltype(*result)>>(column, *result);
+            if (is_null(column))
+            {
+                result.reset();
+                return;
+            }
+            // As above: the value is built before it is read into.
+            result.emplace();
+            get_ref_impl<typename T::value_type>(column, *result);
 
-        // An unbound column's null is only known once SQLGetData has run.
-        if (is_null(column))
-            opt_reset(result);
+            // An unbound column's null is only known once SQLGetData has run.
+            if (is_null(column))
+                result.reset();
+        }
+        else
+        {
+            if (is_null(column))
+                throw null_access_error();
+            get_ref_impl<T>(column, result);
+
+            // An unbound column's null is only known once SQLGetData has run.
+            if (is_null(column))
+                throw null_access_error();
+        }
     }
-#endif
 
     template <class T>
     void get_ref(string const& column_name, T const& fallback, T& result) const
@@ -4409,16 +4412,16 @@ private:
     template <typename T>
     std::unique_ptr<T, std::function<void(T*)>> ensure_pdata(short column) const;
 
-    template <class T, typename std::enable_if<!is_string<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<!is_string<T>::value, int> = 0>
     void get_ref_impl(short column, T& result) const;
 
-    template <class T, typename std::enable_if<is_string<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<is_string<T>::value, int> = 0>
     void get_ref_impl(short column, T& result) const;
 
-    template <class T, typename std::enable_if<!is_character<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<!is_character<T>::value, int> = 0>
     void get_ref_from_string_column(short column, T& result) const;
 
-    template <class T, typename std::enable_if<is_character<T>::value, int>::type = 0>
+    template <class T, std::enable_if_t<is_character<T>::value, int> = 0>
     void get_ref_from_string_column(short column, T& result) const;
 
     void throw_if_column_is_out_of_range(short column) const
@@ -4815,6 +4818,8 @@ inline void result::result_impl::get_ref_impl<date>(short column, date& result) 
             return;
         }
     }
+        // A binary column that is not a timestampoffset is answered by the throw below.
+        [[fallthrough]];
     default:
         break;
     }
@@ -4845,6 +4850,8 @@ inline void result::result_impl::get_ref_impl<time>(short column, time& result) 
             return;
         }
     }
+        // A binary column that is not a timestampoffset is answered by the throw below.
+        [[fallthrough]];
     default:
         break;
     }
@@ -4877,6 +4884,8 @@ inline void result::result_impl::get_ref_impl<timestamp>(short column, timestamp
             return;
         }
     }
+        // A binary column that is not a timestampoffset is answered by the throw below.
+        [[fallthrough]];
     default:
         break;
     }
@@ -4911,13 +4920,15 @@ result::result_impl::get_ref_impl<timestampoffset>(short column, timestampoffset
             return;
         }
     }
+        // A binary column that is not a timestampoffset is answered by the throw below.
+        [[fallthrough]];
     default:
         break;
     }
     throw type_incompatible_error();
 }
 
-template <class T, typename std::enable_if<is_string<T>::value, int>::type>
+template <class T, std::enable_if_t<is_string<T>::value, int>>
 inline void result::result_impl::get_ref_impl(short column, T& result) const
 {
     bound_column const& col = bound_columns_[column];
@@ -5060,8 +5071,7 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
         }
         else
         { // bound and not blob
-            void* const data = col.pdata_.get() + rowset_position_ * col.clen_;
-            SQLWCHAR const* s = static_cast<SQLWCHAR*>(data);
+            void const* const data = col.pdata_.get() + rowset_position_ * col.clen_;
             // The indicator counts the characters available, which exceeds what the buffer
             // holds when the driver under-reported the column size and would not hand the
             // column over again. Reading past the buffer is not among the options.
@@ -5069,10 +5079,12 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
             std::size_t const available =
                 static_cast<std::size_t>(col.cbdata_[static_cast<size_t>(rowset_position_)]) /
                 sizeof(SQLWCHAR);
-            string::size_type const str_size = static_cast<string::size_type>(
+            auto const str_size = static_cast<string::size_type>(
                 std::min(available, capacity > 0 ? capacity - 1 : std::size_t{0}));
-            // No-op, or unsigned short to signed char16_t.
-            auto const us = static_cast<wide_char_t const*>(static_cast<void const*>(s));
+            // The buffer holds SQLWCHAR, which is wide_char_t itself where the two agree
+            // and an unsigned short beside a signed char16_t where they do not, so the
+            // read goes through the void the buffer is already held as.
+            auto const us = static_cast<wide_char_t const*>(data);
             convert(us, str_size, result);
         }
         return;
@@ -5524,12 +5536,11 @@ inline auto from_string(std::string const& s, bool)
     return from_string(s, static_cast<long long>(0)) != 0;
 }
 
-template <typename R, typename std::enable_if<std::is_integral<R>::value, int>::type = 0>
+template <typename R, std::enable_if_t<std::is_integral_v<R>, int> = 0>
 auto from_string(std::string const& s, R)
 {
-    auto const integer = from_string(
-        s,
-        typename std::conditional<std::is_signed<R>::value, long long, unsigned long long>::type{});
+    auto const integer =
+        from_string(s, std::conditional_t<std::is_signed_v<R>, long long, unsigned long long>{});
     if (integer > std::numeric_limits<R>::max() || integer < std::numeric_limits<R>::min())
         throw std::range_error("from_string argument out of range");
     return static_cast<R>(integer);
@@ -5550,7 +5561,7 @@ auto from_string(std::string const& s) -> R
     return detail::from_string(s, R{});
 }
 
-template <class T, typename std::enable_if<is_character<T>::value, int>::type>
+template <class T, std::enable_if_t<is_character<T>::value, int>>
 void result::result_impl::get_ref_from_string_column(short column, T& result) const
 {
     bound_column const& col = bound_columns_[column];
@@ -5568,7 +5579,7 @@ void result::result_impl::get_ref_from_string_column(short column, T& result) co
     throw type_incompatible_error();
 }
 
-template <class T, typename std::enable_if<!is_character<T>::value, int>::type>
+template <class T, std::enable_if_t<!is_character<T>::value, int>>
 void result::result_impl::get_ref_from_string_column(short column, T& result) const
 {
     bound_column const& col = bound_columns_[column];
@@ -5600,7 +5611,7 @@ std::unique_ptr<T, std::function<void(T*)>> result::result_impl::ensure_pdata(sh
             static_cast<T*>(data), [](T*) noexcept {});
     }
 
-    std::unique_ptr<T> buffer = std::make_unique<T>();
+    auto buffer = std::make_unique<T>();
     constexpr std::size_t buffer_size = sizeof(T);
     void* handle = native_statement_handle();
     NANODBC_CALL_RC(
@@ -5622,7 +5633,7 @@ std::unique_ptr<T, std::function<void(T*)>> result::result_impl::ensure_pdata(sh
     return buffer;
 }
 
-template <class T, typename std::enable_if<!is_string<T>::value, int>::type>
+template <class T, std::enable_if_t<!is_string<T>::value, int>>
 void result::result_impl::get_ref_impl(short column, T& result) const
 {
     bound_column const& col = bound_columns_[column];
@@ -5961,6 +5972,11 @@ void connection::connect(string const& connection_string, std::list<attribute> c
     impl_->connect(connection_string, attributes);
 }
 
+string connection::browse_connect(string const& connection_string, bool& more_wanted)
+{
+    return impl_->browse(connection_string, more_wanted);
+}
+
 #if !defined(NANODBC_DISABLE_ASYNC) && defined(SQL_ATTR_ASYNC_DBC_EVENT)
 bool connection::async_connect(
     string const& dsn,
@@ -6172,6 +6188,12 @@ statement::statement(class connection& conn, std::list<attribute> const& attribu
 {
 }
 
+// statement assigns by taking its right hand side by value and swapping with it, which is
+// one operation serving as both copy assignment and move assignment. C26432 counts the
+// declarations rather than what they do, and reads the pair it cannot find as missing.
+#ifdef _MSC_VER
+#pragma warning(suppress : 26432)
+#endif
 statement::statement(statement&& rhs) noexcept
     : impl_(std::move(rhs.impl_))
 {
@@ -6384,6 +6406,11 @@ short statement::parameter_type(short param_index) const
     return impl_->parameter_type(param_index);
 }
 
+bool statement::parameter_is_null(short param_index, std::size_t batch_index) const
+{
+    return impl_->parameter_is_null(param_index, batch_index);
+}
+
 // We need to instantiate each form of bind() for each of our supported data types.
 #define NANODBC_INSTANTIATE_BINDS(type)                                                            \
     template void statement::bind(short, const type*, param_direction);              /* 1-ary */   \
@@ -6446,10 +6473,8 @@ template void statement::bind(short, const bool*, std::size_t, param_direction);
 NANODBC_INSTANTIATE_BIND_STRINGS(std::string);
 NANODBC_INSTANTIATE_BIND_STRINGS(wide_string);
 
-#ifdef NANODBC_HAS_STD_STRING_VIEW
 NANODBC_INSTANTIATE_BIND_VECTOR_STRINGS(std::string_view);
 NANODBC_INSTANTIATE_BIND_VECTOR_STRINGS(wide_string_view);
-#endif
 
 #undef NANODBC_INSTANTIATE_BINDS
 #undef NANODBC_INSTANTIATE_BIND_STRINGS
@@ -7057,10 +7082,8 @@ template void table_valued_parameter::bind(short, const bool*, std::size_t); // 
 NANODBC_INSTANTIATE_TVP_BIND_STRINGS(std::string);
 NANODBC_INSTANTIATE_TVP_BIND_STRINGS(wide_string);
 
-#ifdef NANODBC_HAS_STD_STRING_VIEW
 NANODBC_INSTANTIATE_TVP_BIND_VECTOR_STRINGS(std::string_view);
 NANODBC_INSTANTIATE_TVP_BIND_VECTOR_STRINGS(wide_string_view);
-#endif
 
 #undef NANODBC_INSTANTIATE_TVP_BINDS
 #undef NANODBC_INSTANTIATE_TVP_BIND_STRINGS
@@ -8195,6 +8218,68 @@ result::operator bool() const noexcept
     return static_cast<bool>(impl_);
 }
 
+namespace
+{
+// Reads a column as whatever it says it holds. What a column holds is the driver's to
+// say, so this asks rather than being told by the caller. It lives here rather than in
+// the header because the type codes come from the ODBC headers, which nanodbc.h does not
+// carry into everything that includes it.
+std::any read_column_as_its_own_type(result const& results, short column)
+{
+    switch (results.column_datatype(column))
+    {
+    case SQL_BIT:
+        return std::any(results.get<bool>(column));
+    case SQL_TINYINT:
+        return std::any(results.get<signed char>(column));
+    case SQL_SMALLINT:
+        return std::any(results.get<short>(column));
+    case SQL_INTEGER:
+        return std::any(results.get<int>(column));
+    case SQL_BIGINT:
+        return std::any(results.get<long long>(column));
+    case SQL_REAL:
+        return std::any(results.get<float>(column));
+    case SQL_FLOAT:
+    case SQL_DOUBLE:
+        return std::any(results.get<double>(column));
+    case SQL_DATE:
+    case SQL_TYPE_DATE:
+        return std::any(results.get<date>(column));
+    case SQL_TIME:
+    case SQL_TYPE_TIME:
+        return std::any(results.get<time>(column));
+    case SQL_TIMESTAMP:
+    case SQL_TYPE_TIMESTAMP:
+        return std::any(results.get<timestamp>(column));
+    case SQL_BINARY:
+    case SQL_VARBINARY:
+    case SQL_LONGVARBINARY:
+        return std::any(results.get<std::vector<std::uint8_t>>(column));
+    default:
+        // Character types, and the numeric ones carrying more digits than a double holds,
+        // where the text the driver renders is the value rather than an approximation of
+        // it.
+        return std::any(results.get<string>(column));
+    }
+}
+} // namespace
+
+template <>
+std::any result::get(short column) const
+{
+    if (is_null(column))
+        return std::any{};
+
+    return read_column_as_its_own_type(*this, column);
+}
+
+template <>
+std::any result::get(string const& column_name) const
+{
+    return get<std::any>(this->column(column_name));
+}
+
 // The following are the only supported instantiations of result::get_ref().
 template void result::get_ref(short, std::string::value_type&) const;
 template void result::get_ref(short, wide_string::value_type&) const;
@@ -8244,7 +8329,6 @@ template void result::get_ref(string const&, std::vector<std::uint8_t>&) const;
 template void result::get_ref(string const&, _variant_t&) const;
 #endif
 
-#ifdef NANODBC_HAS_STD_OPTIONAL
 // The following are the only supported instantiations of result::get() with optional support.
 template void result::get_ref(short, std::optional<std::string::value_type>&) const;
 template void result::get_ref(short, std::optional<wide_string::value_type>&) const;
@@ -8292,7 +8376,6 @@ template void result::get_ref(string const&, std::optional<timestamp>&) const;
 template void result::get_ref(string const&, std::optional<std::vector<std::uint8_t>>&) const;
 #if defined(_MSC_VER)
 template void result::get_ref(short, std::optional<_variant_t>&) const;
-#endif
 #endif
 
 // The following are the only supported instantiations of result::get_ref() with fallback.
@@ -8405,7 +8488,6 @@ template std::vector<std::uint8_t> result::get(string const&) const;
 template _variant_t result::get(string const&) const;
 #endif
 
-#ifdef NANODBC_HAS_STD_OPTIONAL
 // The following are the only supported instantiations of result::get() with optional support.
 template std::optional<std::string::value_type> result::get(short) const;
 template std::optional<wide_string::value_type> result::get(short) const;
@@ -8455,7 +8537,6 @@ template std::optional<timestamp> result::get(string const&) const;
 template std::optional<std::vector<std::uint8_t>> result::get(string const&) const;
 #if defined(_MSC_VER)
 template std::optional<_variant_t> result::get(string const&) const;
-#endif
 #endif
 
 // The following are the only supported instantiations of result::get() with fallback.

@@ -4,12 +4,14 @@
 #include "base_test_fixture.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <list>
 #include <random>
 #include <set>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -27,7 +29,7 @@ struct test_case_fixture : public base_test_fixture
 {
     // To invoke a unit test over all integral types, use:
     //
-    typedef std::tuple<
+    using integral_test_types = std::tuple<
         short,
         unsigned short,
         int,
@@ -41,8 +43,7 @@ struct test_case_fixture : public base_test_fixture
         signed long long,
         unsigned long long,
         float,
-        double>
-        integral_test_types;
+        double>;
 
     // Test Cases
 
@@ -120,7 +121,90 @@ struct test_case_fixture : public base_test_fixture
         }
         REQUIRE(!result.next());
     }
-#ifdef NANODBC_HAS_STD_OPTIONAL
+
+    // Binding optionals, which say for themselves which values are null, rather than
+    // keeping a separate array of flags in step with the values.
+    void test_bind_optional()
+    {
+        auto conn = connect();
+        create_table(
+            conn,
+            NANODBC_TEXT("test_bind_optional"),
+            NANODBC_TEXT("(id int, i int, s varchar(60))"));
+
+        nanodbc::statement stmt(conn);
+        prepare(stmt, NANODBC_TEXT("insert into test_bind_optional(id, i, s) values (?, ?, ?)"));
+        REQUIRE(stmt.parameters() == 3);
+
+        // A value that is there, and one that is not, through the same call.
+        std::optional<int> const present{42};
+        std::optional<int> const absent;
+        std::optional<nanodbc::string> const text{NANODBC_TEXT("hello")};
+        std::optional<nanodbc::string> const no_text;
+
+        int id = 0;
+        stmt.bind(0, &id);
+        stmt.bind(1, present);
+        stmt.bind(2, text);
+        nanodbc::execute(stmt);
+
+        id = 1;
+        stmt.bind(0, &id);
+        stmt.bind(1, absent);
+        stmt.bind(2, no_text);
+        nanodbc::execute(stmt);
+
+        auto result = nanodbc::execute(
+            conn, NANODBC_TEXT("select i, s from test_bind_optional order by id asc"));
+
+        REQUIRE(result.next());
+        REQUIRE(result.get<std::optional<int>>(0) == present);
+        REQUIRE(result.get<std::optional<nanodbc::string>>(1) == text);
+
+        REQUIRE(result.next());
+        REQUIRE(result.is_null(0));
+        REQUIRE(result.is_null(1));
+        REQUIRE(result.get<std::optional<int>>(0) == std::nullopt);
+        REQUIRE(result.get<std::optional<nanodbc::string>>(1) == std::nullopt);
+
+        REQUIRE(!result.next());
+    }
+
+    // The batch forms of the same thing: one vector carrying both the values and which of
+    // them are null, where the flags overload asks for two.
+    void test_batch_bind_optional()
+    {
+        auto conn = connect();
+        create_table(
+            conn,
+            NANODBC_TEXT("test_batch_bind_optional"),
+            NANODBC_TEXT("(id int, i int, s varchar(60))"));
+
+        std::vector<int> const ids{0, 1, 2};
+        std::vector<std::optional<int>> const values{10, std::nullopt, 30};
+        std::vector<std::optional<nanodbc::string>> const texts{
+            NANODBC_TEXT("first"), NANODBC_TEXT("second"), std::nullopt};
+
+        nanodbc::statement stmt(conn);
+        prepare(
+            stmt, NANODBC_TEXT("insert into test_batch_bind_optional(id, i, s) values (?, ?, ?)"));
+        REQUIRE(stmt.parameters() == 3);
+        stmt.bind(0, ids);
+        stmt.bind(1, values);
+        stmt.bind_strings(2, texts);
+        nanodbc::transact(stmt, ids.size());
+
+        auto result = nanodbc::execute(
+            conn, NANODBC_TEXT("select i, s from test_batch_bind_optional order by id asc"));
+        for (std::size_t i = 0; i < ids.size(); ++i)
+        {
+            REQUIRE(result.next());
+            REQUIRE(result.get<std::optional<int>>(0) == values[i]);
+            REQUIRE(result.get<std::optional<nanodbc::string>>(1) == texts[i]);
+        }
+        REQUIRE(!result.next());
+    }
+
     void test_batch_insert_integral_optional()
     {
         auto conn = connect();
@@ -151,7 +235,6 @@ struct test_case_fixture : public base_test_fixture
             REQUIRE(i == batch_size);
         }
     }
-#endif
     // How many parameter sets a statement executes and how many rows it fetches at a time
     // are unrelated. A query taking one set of parameters may still want its rows in large
     // blocks, which asking for both with one number cannot express.
@@ -360,7 +443,6 @@ struct test_case_fixture : public base_test_fixture
 
     void test_bind_rows_null()
     {
-#ifdef NANODBC_HAS_STD_OPTIONAL
         struct row
         {
             int i;
@@ -407,9 +489,6 @@ struct test_case_fixture : public base_test_fixture
         REQUIRE(!result.is_null(2));
 
         REQUIRE(!result.next());
-#else
-        SUCCEED("binding an absent value as null asks for std::optional, so C++17 or later");
-#endif
     }
 
     template <std::size_t BatchSize, std::size_t MaxValueSize>
@@ -1684,11 +1763,12 @@ struct test_case_fixture : public base_test_fixture
             {
                 if (backwards.prior())
                     REQUIRE(backwards.get<int>(0) == 1);
-                // Relative and absolute fetches alike, which such cursors refuse.
-                backwards.skip(2);
-                backwards.first();
-                backwards.last();
-                backwards.move(1);
+                // Relative and absolute fetches alike, which such cursors refuse. Whether
+                // each moved is beside the point: the throw is what is being watched for.
+                static_cast<void>(backwards.skip(2));
+                static_cast<void>(backwards.first());
+                static_cast<void>(backwards.last());
+                static_cast<void>(backwards.move(1));
             }
             catch (nanodbc::database_error const&)
             {
@@ -1954,7 +2034,7 @@ struct test_case_fixture : public base_test_fixture
         {
             auto results = execute(
                 connection, NANODBC_TEXT("select count(*) from test_nested_transaction_rollback;"));
-            results.next();
+            REQUIRE(results.next());
             return results.template get<int>(0);
         };
 
@@ -2627,7 +2707,7 @@ struct test_case_fixture : public base_test_fixture
                         REQUIRE(columns.ordinal_position() > 0);
                         columns.procedure_catalog();
                         columns.procedure_schema();
-                        columns.column_size();
+                        static_cast<void>(columns.column_size());
                         columns.buffer_length();
                         columns.decimal_digits();
                         columns.numeric_precision_radix();
@@ -3009,7 +3089,6 @@ struct test_case_fixture : public base_test_fixture
         }
     }
 
-#ifdef NANODBC_HAS_STD_OPTIONAL
     void test_date_optional()
     {
         auto connection = connect();
@@ -3045,7 +3124,7 @@ struct test_case_fixture : public base_test_fixture
             REQUIRE((*d).day == 12);
         }
     }
-#endif
+
     void test_dbms_info()
     {
         // A generic test to exercise the DBMS info API is callable.
@@ -3232,6 +3311,9 @@ struct test_case_fixture : public base_test_fixture
             // https://www.vertica.com/docs/11.1.x/HTML/Content/Authoring/ErrorCodes/SqlState-23505.htm
             error_result = {"23505", "Duplicate key values"};
             break;
+        case database_vendor::firebird:
+            error_result = {"23000", "violation of PRIMARY or UNIQUE KEY constraint"};
+            break;
         default:
             FAIL("Database vendor is unknown.");
         }
@@ -3282,14 +3364,14 @@ struct test_case_fixture : public base_test_fixture
         nanodbc::prepare(statement, NANODBC_TEXT("select 42;"));
 
         nanodbc::result results = statement.execute();
-        results.next();
+        REQUIRE(results.next());
 
         results = statement.execute();
-        results.next();
+        REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 42);
 
         results = statement.execute();
-        results.next();
+        REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 42);
     }
 
@@ -3304,12 +3386,12 @@ struct test_case_fixture : public base_test_fixture
         {
             nanodbc::transaction transaction(connection);
             results = statement.execute();
-            results.next();
+            REQUIRE(results.next());
             REQUIRE(results.get<int>(0) == 42);
         }
 
         results = statement.execute();
-        results.next();
+        REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 42);
     }
 
@@ -4415,7 +4497,6 @@ PRIMARY KEY(t2_fid)
         REQUIRE(ref == name);
     }
 
-#ifdef NANODBC_HAS_STD_OPTIONAL
     void test_string_optional()
     {
         nanodbc::connection connection = connect();
@@ -4443,7 +4524,7 @@ PRIMARY KEY(t2_fid)
         results.get_ref(0, ref);
         REQUIRE(*ref == name);
     }
-#endif
+
     void test_string_with_varchar_max()
     {
         nanodbc::connection connection = connect();
@@ -4522,8 +4603,6 @@ PRIMARY KEY(t2_fid)
 
     void test_string_view_vector()
     {
-// std::string_view is only supported since C++17 compliant compilers
-#if __cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
         nanodbc::connection connection = connect();
         REQUIRE(connection.native_dbc_handle() != nullptr);
         REQUIRE(connection.native_env_handle() != nullptr);
@@ -4582,7 +4661,6 @@ PRIMARY KEY(t2_fid)
         REQUIRE(results.get<nanodbc::string>(0) == NANODBC_TEXT("Dino"));
         REQUIRE(results.is_null(1));
         REQUIRE(results.is_null(2));
-#endif //__cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
     }
 
     void test_string_vector_null_vector()
@@ -4686,7 +4764,6 @@ PRIMARY KEY(t2_fid)
         }
     }
 
-#ifdef NANODBC_HAS_STD_OPTIONAL
     void test_time_optional()
     {
         auto connection = connect();
@@ -4713,7 +4790,7 @@ PRIMARY KEY(t2_fid)
             REQUIRE((*t).sec == 59);
         }
     }
-#endif
+
     void test_transaction()
     {
         nanodbc::connection connection = connect();
@@ -5149,7 +5226,7 @@ PRIMARY KEY(t2_fid)
         int i = 3;
         while (!results.at_end())
         {
-            results.next();
+            REQUIRE(results.next());
             REQUIRE(results.get<int>(0) == i--);
         }
     }
@@ -5417,9 +5494,162 @@ PRIMARY KEY(t2_fid)
         // than anything left over from reading it.
     }
 
+    // A connection belongs to the thread that made it. Several threads working at once,
+    // each with its own, is the arrangement nanodbc asks for, and this is that.
+    void test_connection_per_thread()
+    {
+        std::size_t const thread_count = 8;
+        std::size_t const rows_each = 25;
+
+        auto connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_connection_per_thread"),
+            NANODBC_TEXT("(tid int, i int)"));
+
+        nanodbc::string const connection_string = connection_string_;
+        std::atomic<int> failures(0);
+        std::vector<std::thread> threads;
+
+        for (std::size_t t = 0; t < thread_count; ++t)
+        {
+            threads.emplace_back(
+                [connection_string, t, rows_each, &failures]()
+                {
+                    try
+                    {
+                        nanodbc::connection own(connection_string);
+                        nanodbc::statement statement(own);
+                        prepare(
+                            statement,
+                            NANODBC_TEXT(
+                                "insert into test_connection_per_thread (tid, i) values (?, ?);"));
+
+                        for (std::size_t i = 0; i < rows_each; ++i)
+                        {
+                            int tid = static_cast<int>(t);
+                            int value = static_cast<int>(i);
+                            statement.bind(0, &tid);
+                            statement.bind(1, &value);
+                            execute(statement);
+                        }
+                    }
+                    catch (...)
+                    {
+                        ++failures;
+                    }
+                });
+        }
+
+        for (auto& thread : threads)
+            thread.join();
+
+        REQUIRE(failures.load() == 0);
+
+        auto results =
+            execute(connection, NANODBC_TEXT("select count(*) from test_connection_per_thread;"));
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == static_cast<int>(thread_count * rows_each));
+    }
+
+    void test_std_any()
+    {
+        auto connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_std_any"),
+            NANODBC_TEXT("(i int, d float, s varchar(10), n int)"));
+        execute(
+            connection,
+            NANODBC_TEXT("insert into test_std_any (i, d, s, n) values (42, 3.5, 'text', NULL);"));
+
+        auto results = execute(connection, NANODBC_TEXT("select i, d, s, n from test_std_any;"));
+        REQUIRE(results.next());
+
+        // What comes back is what the column holds, not what the caller guessed.
+        auto const i = results.get<std::any>(0);
+        REQUIRE(i.has_value());
+        REQUIRE(std::any_cast<int>(i) == 42);
+
+        // Whether a float column describes itself as SQL_REAL or SQL_DOUBLE is the
+        // driver's to say, and they disagree: MySQL says the first, PostgreSQL and SQL
+        // Server the second. The any holds whichever it said.
+        auto const d = results.get<std::any>(1);
+        REQUIRE(d.has_value());
+        double const floating =
+            d.type() == typeid(double) ? std::any_cast<double>(d) : std::any_cast<float>(d);
+        REQUIRE(floating == Catch::Approx(3.5));
+
+        auto const s = results.get<std::any>(2);
+        REQUIRE(s.has_value());
+        REQUIRE(std::any_cast<nanodbc::string>(s) == NANODBC_TEXT("text"));
+
+        // A null column holds nothing at all, rather than a value standing in for one.
+        auto const n = results.get<std::any>(3);
+        REQUIRE(!n.has_value());
+
+        // And by name, which reads the same column.
+        auto const by_name = results.get<std::any>(as_identifier(NANODBC_TEXT("i")));
+        REQUIRE(std::any_cast<int>(by_name) == 42);
+
+        // Asking for the wrong type is the caller's mistake, and says so.
+        REQUIRE_THROWS_AS(std::any_cast<nanodbc::string>(i), std::bad_any_cast);
+    }
+
+    void test_std_variant()
+    {
+        using value = std::variant<std::monostate, nanodbc::string, int, double>;
+
+        auto connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_std_variant"),
+            NANODBC_TEXT("(i int, s varchar(10), n int)"));
+        execute(
+            connection,
+            NANODBC_TEXT("insert into test_std_variant (i, s, n) values (42, 'text', NULL);"));
+
+        auto results = execute(connection, NANODBC_TEXT("select i, s, n from test_std_variant;"));
+        REQUIRE(results.next());
+
+        auto const i = results.get_as<value>(0);
+        REQUIRE(std::holds_alternative<int>(i));
+        REQUIRE(std::get<int>(i) == 42);
+
+        auto const s = results.get_as<value>(1);
+        REQUIRE(std::holds_alternative<nanodbc::string>(s));
+        REQUIRE(std::get<nanodbc::string>(s) == NANODBC_TEXT("text"));
+
+        // A null column leaves the variant on its first alternative, as the issue asks.
+        auto const n = results.get_as<value>(2);
+        REQUIRE(n.index() == 0);
+        REQUIRE(std::holds_alternative<std::monostate>(n));
+
+        // And by name, which reads the same column.
+        auto const by_name = results.get_as<value>(as_identifier(NANODBC_TEXT("i")));
+        REQUIRE(std::get<int>(by_name) == 42);
+
+        // A variant with nowhere to put what the column holds says so, which the compiler
+        // cannot: what the column holds is the driver's to say.
+        using narrow = std::variant<std::monostate, double>;
+        REQUIRE_THROWS_AS(results.get_as<narrow>(1), nanodbc::type_incompatible_error);
+    }
+
+    // A driver that cannot answer what SQLBrowseConnect asks says so through the
+    // diagnostics rather than by any other means, so a caller learns it by asking. This
+    // is registered for the backends whose drivers do not support it; SQL Server's does,
+    // and is covered by test_browse_connect.
+    void test_browse_connect_unsupported()
+    {
+        nanodbc::connection connection;
+        bool more_wanted = false;
+        REQUIRE_THROWS_AS(
+            connection.browse_connect(connection_string_, more_wanted), nanodbc::database_error);
+        REQUIRE(!connection.connected());
+    }
+
     void test_std_optional()
     {
-#ifdef NANODBC_HAS_STD_OPTIONAL
         test_batch_insert_integral_optional();
         test_string_optional();
         // Oracle has no TIME type, and its DATE carries a time of day, which the driver
@@ -5430,7 +5660,6 @@ PRIMARY KEY(t2_fid)
             test_time_optional();
             test_date_optional();
         }
-#endif
     }
 };
 

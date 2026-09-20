@@ -79,6 +79,19 @@ TEST_CASE_METHOD(postgresql_fixture, "test_batch_delete", "[postgresql][batch][d
     test_batch_delete();
 }
 
+TEST_CASE_METHOD(postgresql_fixture, "test_bind_optional", "[postgresql][bind][null][optional]")
+{
+    test_bind_optional();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_batch_bind_optional",
+    "[postgresql][batch][null][optional]")
+{
+    test_batch_bind_optional();
+}
+
 TEST_CASE_METHOD(postgresql_fixture, "test_batch_insert_null", "[postgresql][batch][null]")
 {
     test_batch_insert_null();
@@ -107,6 +120,16 @@ TEST_CASE_METHOD(postgresql_fixture, "test_bind_rows_null", "[postgresql][batch]
 TEST_CASE_METHOD(postgresql_fixture, "test_std_optional", "[postgresql][optional]")
 {
     test_std_optional();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_std_any", "[postgresql][any]")
+{
+    test_std_any();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_std_variant", "[postgresql][variant]")
+{
+    test_std_variant();
 }
 
 TEST_CASE_METHOD(
@@ -172,6 +195,22 @@ TEST_CASE_METHOD(
     "[postgresql][connection][attributes]")
 {
     test_connection_attributes();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_connection_per_thread",
+    "[postgresql][connection][threads]")
+{
+    test_connection_per_thread();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_browse_connect_unsupported",
+    "[postgresql][connection][browse]")
+{
+    test_browse_connect_unsupported();
 }
 
 TEST_CASE_METHOD(postgresql_fixture, "test_dbms_info", "[postgresql][dmbs][metadata][info]")
