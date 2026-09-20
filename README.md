@@ -10,13 +10,15 @@ user information, example usage, propaganda, and detailed source level documenta
 
 ## Build Status
 
-| Branch | Linux/OSX                                                                                                                                                             | Windows                                                                                                                                                                   | Coverage                                                                                                               | Coverity                                     |
-| :----- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------- | :------------------------------------------- |
-| `main` | [![main](https://github.com/nanodbc/nanodbc/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/nanodbc/nanodbc/actions/workflows/ci-linux.yml) | [![main](https://github.com/nanodbc/nanodbc/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/nanodbc/nanodbc/actions/workflows/ci-windows.yml) | [![codecov](https://codecov.io/gh/nanodbc/nanodbc/branch/main/graph/badge.svg)](https://codecov.io/gh/nanodbc/nanodbc) | [![coverity_scan][coverity-badge]][coverity] |
+| Branch | Linux                                                                                                                                                                | Windows                                                                                                                                                                  | Coverage                                                                                                              |
+| :----- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
+| `main` | [![main](https://github.com/nanodbc/nanodbc/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/nanodbc/nanodbc/actions/workflows/ci-linux.yml) | [![main](https://github.com/nanodbc/nanodbc/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/nanodbc/nanodbc/actions/workflows/ci-windows.yml) | [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fnanodbc%2Fnanodbc%2Fbadges%2Fcoverage.json)](https://github.com/nanodbc/nanodbc/actions/workflows/ci-linux.yml?query=branch%3Amain) |
 
-> **Note:** The Coverity status uses the [coverity_scan][nanodbc-coverity] branch.
-> When `main` has had a significant amount of work pushed to it,
-> merge those changes into `coverity_scan` as well to keep the status up to date.
+Coverage is measured by the `coverage` job in [ci-linux.yml](.github/workflows/ci-linux.yml), which
+instruments the library with llvm-cov and runs the utility, SQLite and PostgreSQL suites. The job
+comments the figures on each pull request and prints the same report into its own summary, so the
+coverage change is visible before merging, and it publishes the figure the badge above reads to the
+`badges` branch. The lcov report is attached to each run as an artifact.
 
 ## Philosophy
 
@@ -51,9 +53,9 @@ files into your project and run with it. For those that want it, I have also pro
 [CMake][cmake] files which build a library object, or build and run the included tests.
 The CMake files will also support out of source builds.
 
-Tests use the [Catch][catch] test framework, and CMake will automatically fetch the latest version
-of Catch for you at build time. To build the nanodbc and the tests you will also need to have
-either [unixODBC] or [iODBC] installed and discoverable by CMake.
+Tests use the [Catch2][catch] test framework, vendored under `test/catch` as its amalgamated
+distribution so that the tests build without network access. To build the nanodbc and the tests
+you will also need to have either [unixODBC] or [iODBC] installed and discoverable by CMake.
 This is easy on OS X where you can use [Homebrew][brew] to install unixODBC with `brew install unixodbc`,
 or use the system provided iODBC if you have OS X 10.9 or earlier.
 
@@ -67,8 +69,8 @@ section like the following.
 ```ini
 [sqlite]
 Description             = SQLite3 ODBC Driver
-Setup                   = /usr/lib/libsqlite3odbc-0.93.dylib
-Driver                  = /usr/lib/libsqlite3odbc-0.93.dylib
+Setup                   = /usr/lib/libsqlite3odbc.dylib
+Driver                  = /usr/lib/libsqlite3odbc.dylib
 Threading               = 2
 ```
 
@@ -111,18 +113,21 @@ Use the standard CMake option `-DBUILD_SHARED_LIBS=ON` to build nanodbc as share
 If you need to use the `NANODBC_ENABLE_BOOST=ON` option, you will have to configure your
 environment to use [Boost][boost].
 
-| CMake&nbsp;Option                  | Possible&nbsp;Values | Details                                                                                                                                                    |
-| ---------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NANODBC_DISABLE_ASYNC`            | `OFF` or `ON`        | Disable all async features. May resolve build issues in older ODBC versions.                                                                               |
-| `NANODBC_DISABLE_EXAMPLES`         | `OFF` or `ON`        | Do not build examples.                                                                                                                                     |
-| `NANODBC_DISABLE_INSTALL`          | `OFF` or `ON`        | Do not generate install target.                                                                                                                            |
-| `NANODBC_DISABLE_LIBCXX`           | `OFF` or `ON`        | Do not use libc++, if available on the system.                                                                                                             |
-| `NANODBC_DISABLE_TESTS`            | `OFF` or `ON`        | Do not build tests.                                                                                                                                        |
+| CMake&nbsp;Option                  | Possible&nbsp;Values | Details |
+| -----------------------------------| ---------------------| ------- |
+| `NANODBC_BUILD_EXAMPLES`           | `OFF` or `ON`        | Build examples. On by default when nanodbc is the top level project. |
+| `NANODBC_BUILD_TESTS`              | `OFF` or `ON`        | Build tests. On by default when nanodbc is the top level project. |
+| `NANODBC_DISABLE_ASYNC`            | `OFF` or `ON`        | Disable all async features. The ODBC 3.8 async API is switched off automatically when the ODBC headers found at configure time do not declare it. |
+| `NANODBC_DISABLE_MSSQL_TVP`        | `OFF` or `ON`        | Do not use MSSQL table-valued parameters. |
 | `NANODBC_ENABLE_BOOST`             | `OFF` or `ON`        | Use Boost for Unicode string convertions (requires [Boost.Locale][boost-locale]). Workaround to issue [#24](https://github.com/nanodbc/nanodbc/issues/24). |
-| `NANODBC_ENABLE_UNICODE`           | `OFF` or `ON`        | Enable Unicode support. `nanodbc::string` becomes `std::u16string` or `std::u32string`.                                                                    |
-| `NANODBC_ENABLE_WORKAROUND_NODATA` | `OFF` or `ON`        | Enable `SQL_NO_DATA` workaround to issue [#43](https://github.com/nanodbc/nanodbc/issues/43).                                                              |
+| `NANODBC_ENABLE_COVERAGE`          | `OFF` or `ON`        | Enable code coverage analysis. Requires tests to be built. |
+| `NANODBC_ENABLE_UNICODE`           | `OFF` or `ON`        | Enable Unicode support. `nanodbc::string` becomes `std::u16string` or `std::u32string`. |
+| `NANODBC_ENABLE_WORKAROUND_NODATA` | `OFF` or `ON`        | Enable `SQL_NO_DATA` workaround to issue [#43](https://github.com/nanodbc/nanodbc/issues/43). |
+| `NANODBC_FORCE_LIBCXX`             | `OFF` or `ON`        | Force the use of libc++. On by default if the compiler supports it. |
+| `NANODBC_FORCE_WARNINGS_AS_ERROR`  | `OFF` or `ON`        | Treat compiler warnings as errors when building nanodbc. |
+| `NANODBC_GENERATE_INSTALL`         | `OFF` or `ON`        | Generate the install target. On by default when nanodbc is the top level project. |
 | `NANODBC_OVERALLOCATE_CHAR`        | `OFF` or `ON`        | Overallocate auto-bound n/var/char buffers to accomodate retrieving Unicode data in VARCHAR columns [#219](https://github.com/nanodbc/nanodbc/issues/219). |
-| `NANODBC_ODBC_VERSION`             | `SQL_OV_ODBC3[...]`  | Forces ODBC version to use. Default is `SQL_OV_ODBC3_80` if available, otherwise `SQL_OV_ODBC3`.                                                           |
+| `NANODBC_ODBC_VERSION`             | `SQL_OV_ODBC3[...]`  | Forces ODBC version to use. Default is `SQL_OV_ODBC3_80` if available, otherwise `SQL_OV_ODBC3`. |
 
 ### Note About iODBC
 
@@ -169,47 +174,47 @@ from the [doc/README.md](doc/README.md) file.
 
 ### Quick Setup for Testing or Development Environments
 
-To get up and running with nanodbc as fast as possible consider using the provided [Dockerfile.dev](Dockerfile.dev) and [docker-compose.yml](docker-compose.yml).
-
-`Dockerfile.dev` builds a development and testing environment: a compiler toolchain, CMake, and the ODBC driver managers, drivers and client tools for every database nanodbc is tested against. Because it is not named `Dockerfile`, pass it to `docker build` with `-f`.
-
-For example, to spin up a [docker][docker] container suitable for testing and development of nanodbc:
-
-```shell
-$ cd /path/to/nanodbc
-$ docker build -f Dockerfile.dev -t nanodbc .
-
-# To build using the nanodbc already source within the container
-$ docker run -it nanodbc /bin/bash
-
-# Alternatively, mount the nanodbc repository into the container as a volume
-$ docker run -v "$(pwd)":"/opt/$(basename $(pwd))" -it nanodbc /bin/bash
-
-# Then, enter the source directory and build nanodbc:
-root@hash:/# mkdir -p /opt/nanodbc/build
-root@hash:/# cd /opt/nanodbc/build
-root@hash:/opt/nanodbc/build# cmake ..
-root@hash:/opt/nanodbc/build# make nanodbc
-```
-
-Or, spin up the complete multi-container environment with database services. This is the easiest way to run the database tests, since it starts PostgreSQL, MySQL and SQL Server alongside the development container, mounts your working tree at `/opt/nanodbc`, and presets the `NANODBC_TEST_CONNSTR_*` variables the test programs read:
+Every database nanodbc is tested against runs as a container, so none of them has to be installed on your machine. [docker-compose.yml](docker-compose.yml) defines a service per database plus a `nanodbc` development container built from [Dockerfile.dev](Dockerfile.dev), which carries a compiler toolchain, CMake, and the ODBC driver managers, drivers and client tools for all of them.
 
 ```shell
 cd /path/to/nanodbc
-docker-compose build
-docker-compose up -d
-docker exec -it nanodbc /bin/bash
 
-# Then, inside the container, build and run the tests:
-root@hash:/# cmake -S /opt/nanodbc -B /opt/nanodbc/build -DCMAKE_BUILD_TYPE=Release
-root@hash:/# cmake --build /opt/nanodbc/build
+# Start the database servers and wait until each one is accepting connections
+docker compose up -d
 
-# All of them, or one database at a time
-root@hash:/# ctest --test-dir /opt/nanodbc/build --output-on-failure
-root@hash:/# ctest --test-dir /opt/nanodbc/build --output-on-failure -R sqlite_tests
+# Open a shell in the development container, with your working tree mounted at /opt/nanodbc
+docker compose run --rm nanodbc /bin/bash
 ```
 
-The SQLite and utility tests need no server. Give the database services a few seconds to finish initializing before running the tests against them.
+The development container presets the `NANODBC_TEST_CONNSTR_*` variables the test programs read, so inside it a build and a full test run need no arguments:
+
+```shell
+root@hash:/opt/nanodbc# cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+root@hash:/opt/nanodbc# cmake --build build --parallel
+
+# All of them, or one database at a time
+root@hash:/opt/nanodbc# ctest --test-dir build --output-on-failure -E vertica_tests
+root@hash:/opt/nanodbc# ctest --test-dir build --output-on-failure -R sqlite_tests
+```
+
+The SQLite and utility tests need no server at all, so they are the quickest way to check a change.
+
+Each server version can be overridden, which is how a version from the CI matrix is reproduced:
+
+```shell
+POSTGRES_VERSION=14 docker compose up -d pgsql
+```
+
+The Vertica tests need Vertica's own ODBC driver, which the development image does not carry, so a full `ctest` run excludes them with `-E vertica_tests`.
+
+When you are done, `docker compose down` stops everything, and `docker compose down -v` also discards the databases' data.
+
+To build the development image on its own, without the database services, pass the file to `docker build` with `-f`, since it is not named `Dockerfile`:
+
+```shell
+docker build -f Dockerfile.dev -t nanodbc .
+docker run -v "$(pwd)":/opt/nanodbc -it nanodbc /bin/bash
+```
 
 ### Tests
 
@@ -221,20 +226,26 @@ The good news is that adding tests is easy!
 
 The tests structure:
 
-- `tests/base_test_fixture.h` includes a set of common test cases.
-- `tests/<database>_test.cpp` is a source code for an independent test program that includes both,
+- `test/base_test_fixture.h` provides the helpers the fixtures share, such as connecting,
+  creating and dropping tables, and reporting which backend is under test.
+- `test/test_case_fixture.h` holds the test cases that run against every backend.
+- `test/<database>_test.cpp` is a source code for an independent test program that includes both,
   common and database-specific test cases.
 
 To add new test case:
 
-1. In `tests/base_test_fixture.h` file, add a new test case method to `base_test_fixture`
+1. In `test/test_case_fixture.h` file, add a new test case method to `test_case_fixture`
    class (e.g. `void my_feature_test()`).
-2. In each `tests/<database>_test.cpp` file, copy and paste the `TEST_CASE_METHOD` boilerplate,
+2. In each `test/<database>_test.cpp` file, copy and paste the `TEST_CASE_METHOD` boilerplate,
    updating name, tags, etc.
 
 If a feature requires a database-specific test case for each database, then skip the
-`tests/base_test_fixture.h` step and write a dedicated test case directly in
-`tests/<database>_test.cpp` file.
+`test/test_case_fixture.h` step and write a dedicated test case directly in
+`test/<database>_test.cpp` file.
+
+The SQLite and utility tests need no server, so they are the quickest way to check a change
+locally. `docker-compose.yml` brings up the database servers for the rest, all as containers; see
+[Quick Setup for Testing or Development Environments](#quick-setup-for-testing-or-development-environments).
 
 ## Publish and Release Process
 
@@ -264,20 +275,6 @@ Next, switch to `gh-pages` branch, build latest documentation, commit and push.
 
 Finally, announce the new release to the public.
 
-## Future work
-
-### Good to Have / Want Someday
-
-- Refactor tests to follow BDD pattern.
-- Update codebase to use more C++14 idioms and patterns.
-- Write more tests with the goal to have much higher code coverage.
-- More tests for a large variety of drivers. Include performance tests.
-- Clean up `bind_*` family of functions, reduce any duplication.
-- Improve documentation: The main website and API docs should be more responsive.
-- Provide more examples in documentation, more details, and point out any gotchas.
-- Versioned generated source level API documentation for `master` and previous releases.
-- Add "HOWTO Build" documentation for Windows, OS X, and Linux.
-
 ---
 
 [MIT][mit] &copy; [lexicalunit, mloskot][authors] and [contributors][contributors].
@@ -287,12 +284,11 @@ Finally, announce the new release to the public.
 [contributors]: https://github.com/nanodbc/nanodbc/graphs/contributors
 [nanodbc]: http://nanodbc.io
 [nanodbc-banner]: https://cloud.githubusercontent.com/assets/1903876/11858632/cc0e21e6-a428-11e5-9a84-39fa27984914.png
-[nanodbc-coverity]: https://github.com/nanodbc/nanodbc/tree/coverity_scan
 [nanodbc-new-issue]: https://github.com/nanodbc/nanodbc/issues/new
 [boost]: http://www.boost.org/
 [boost-locale]: http://www.boost.org/doc/libs/release/libs/locale/
 [brew]: http://brew.sh/
-[catch]: https://github.com/philsquared/Catch
+[catch]: https://github.com/catchorg/Catch2
 [clang-format]: http://clang.llvm.org/docs/ClangFormat.html
 [cmake-docs]: https://cmake.org/cmake/help/latest/manual/cmake.1.html
 [cmake]: http://www.cmake.org/
@@ -307,5 +303,3 @@ Finally, announce the new release to the public.
 [sqlite]: https://www.sqlite.org/
 [sqliteodbc]: http://www.ch-werner.de/sqliteodbc/
 [unixodbc]: http://www.unixodbc.org/
-[coverity]: https://scan.coverity.com/projects/nanodbc-nanodbc
-[coverity-badge]: https://scan.coverity.com/projects/7437/badge.svg

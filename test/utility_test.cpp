@@ -1,5 +1,4 @@
-#define CATCH_CONFIG_MAIN
-#include "catch/catch.hpp"
+#include "catch/catch_amalgamated.hpp"
 
 // clang-format off
 #define NANODBC_DISABLE_NANODBC_NAMESPACE_FOR_INTERNAL_TESTS
@@ -90,7 +89,9 @@ SECTION("malformed utf-16")
 
 TEST_CASE("convert", "[string]")
 {
-    std::string const u8 = (char const*)u8"Hello ツ World"; // FIXME: Hack! C++20 adds std::u8string
+    // The cast is what carries the literal across the standards: it is char const* through
+    // C++17 and char8_t const* from C++20.
+    std::string const u8 = (char const*)u8"Hello ツ World";
     std::u16string const u16 = u"Hello ツ World";
     std::u32string const u32 = U"Hello ツ World";
     std::wstring const w = L"Hello ツ World";
@@ -201,4 +202,13 @@ SECTION("narrowing conversion")
 #endif
     }
 }
+}
+
+// Catch is compiled without its own main(), so that the one large translation unit is
+// built once for every test program rather than twice.
+int main(int argc, char* argv[])
+{
+    Catch::Session session;
+    session.configData().runOrder = Catch::TestRunOrder::Declared;
+    return session.run(argc, argv);
 }

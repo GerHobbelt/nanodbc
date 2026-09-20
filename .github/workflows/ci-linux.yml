@@ -8,7 +8,6 @@ on:
   push:
     branches:
       - main
-      - ml/*
     paths:
       - "**.cpp"
       - "**.h"
@@ -21,9 +20,16 @@ on:
       - "**/CMakeLists.txt"
       - ".github/workflows/ci-linux.yml"
 
+# One run per workflow per ref. A new push cancels the run it superseded, except on main,
+# where each merge should be allowed to finish reporting.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   check-format:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -42,163 +48,307 @@ jobs:
           check-path: ${{ matrix.path['check'] }}
           exclude-regex: ${{ matrix.path['ignore'] }}
 
+  # GCC 13 through 16, the current release and the three before it. Ubuntu 26.04 is the
+  # only image carrying that range, and its runner is still a preview, so it is used as a
+  # container on a stable runner instead.
   build-gcc:
     needs: [check-format]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # TODO: Compilation with GCC 12 fails with errors related to char8_t conversions
-          #- { cxxstd: '20', cxx: g++-12, cc: gcc-12, os: ubuntu-22.04 }
-          #- { cxxstd: '17', cxx: g++-12, cc: gcc-12, os: ubuntu-22.04 }
-          #- { cxxstd: '14', cxx: g++-12, cc: gcc-12, os: ubuntu-22.04 }
-          #- { cxxstd: '17', cxx: g++-11, cc: gcc-11, os: ubuntu-22.04 }
-          - { cxxstd: "14", cxx: g++-11, cc: gcc-11, os: ubuntu-22.04 }
-          - { cxxstd: "17", cxx: g++-10, cc: gcc-10, os: ubuntu-22.04 }
-          - { cxxstd: "14", cxx: g++-10, cc: gcc-10, os: ubuntu-22.04 }
-          - { cxxstd: "17", cxx: g++-9, cc: gcc-9, os: ubuntu-22.04 }
-          - { cxxstd: "14", cxx: g++-9, cc: gcc-9, os: ubuntu-22.04 }
-
-    name: build-${{ matrix.cc }}-std-${{ matrix.cxxstd }}
-
-    runs-on: ${{ matrix.os }}
-
+        gcc: [16, 15, 14, 13]
+        cxxstd: ["20", "17", "14"]
+    name: build-gcc-${{ matrix.gcc }}-std-${{ matrix.cxxstd }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: ubuntu:26.04
     env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
-
+      CC: gcc-${{ matrix.gcc }}
+      CXX: g++-${{ matrix.gcc }}
+      DEBIAN_FRONTEND: noninteractive
+      CCACHE_DIR: /ccache
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl make ${{ matrix.cxx }}
-      - name: Install CMake
-        run: |
-          curl -OL https://github.com/Kitware/CMake/releases/download/v3.27.1/cmake-3.27.1-linux-x86_64.tar.gz
-          tar -xf cmake-3.27.1-linux-x86_64.tar.gz
-          echo "${PWD}/cmake-3.27.1-linux-x86_64/bin" >> $GITHUB_PATH
+          apt-get -o DPkg::Lock::Timeout=120 update
+          apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends \
+            ca-certificates ccache cmake g++-${{ matrix.gcc }} git make unixodbc-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Restore compiled objects
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /ccache
+          key: ccache-gcc${{ matrix.gcc }}-std${{ matrix.cxxstd }}-${{ github.sha }}
+          restore-keys: ccache-gcc${{ matrix.gcc }}-std${{ matrix.cxxstd }}-
       - name: Check
         run: |
-          echo && type g++ && which g++ && g++ --version
-          echo CC=${CC} && echo CXX=${CXX} && type ${CXX} && which ${CXX} && ${CXX} --version
-          echo && type cmake && which cmake && cmake --version
+          ${CXX} --version
+          cmake --version
       - name: Configure
         run: |
-          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=${{matrix.cxxstd}}
+          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=${{ matrix.cxxstd }} -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: |
-          cmake --build ${GITHUB_WORKSPACE}/build
+          cmake --build ${GITHUB_WORKSPACE}/build --parallel
 
+  # Clang 19 through 22, on the same basis as the GCC matrix above.
   build-clang:
     needs: [check-format]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {
-              cxxstd: "20",
-              cxx: clang++-14,
-              cc: clang-14,
-              os: ubuntu-22.04,
-              pkg: "libc++-14-dev libc++abi-14-dev",
-            }
-          - {
-              cxxstd: "17",
-              cxx: clang++-14,
-              cc: clang-14,
-              os: ubuntu-22.04,
-              pkg: "libc++-14-dev libc++abi-14-dev",
-            }
-          - {
-              cxxstd: "14",
-              cxx: clang++-14,
-              cc: clang-14,
-              os: ubuntu-22.04,
-              pkg: "libc++-14-dev libc++abi-14-dev",
-            }
-          - {
-              cxxstd: "20",
-              cxx: clang++-13,
-              cc: clang-13,
-              os: ubuntu-22.04,
-              pkg: "libc++-13-dev libc++abi-13-dev",
-            }
-          - {
-              cxxstd: "17",
-              cxx: clang++-13,
-              cc: clang-13,
-              os: ubuntu-22.04,
-              pkg: "libc++-13-dev libc++abi-13-dev",
-            }
-          - {
-              cxxstd: "14",
-              cxx: clang++-13,
-              cc: clang-13,
-              os: ubuntu-22.04,
-              pkg: "libc++-13-dev libc++abi-13-dev",
-            }
-
-    name: build-${{ matrix.cc }}-std-${{ matrix.cxxstd }}
-
-    runs-on: ${{ matrix.os }}
-
-    container: ${{matrix.container}}
-
+        clang: [22, 21, 20, 19]
+        cxxstd: ["20", "17", "14"]
+    name: build-clang-${{ matrix.clang }}-std-${{ matrix.cxxstd }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: ubuntu:26.04
     env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
-
+      CC: clang-${{ matrix.clang }}
+      CXX: clang++-${{ matrix.clang }}
+      DEBIAN_FRONTEND: noninteractive
+      CCACHE_DIR: /ccache
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Setup container
-        if: matrix.container
-        run: |
-          apt-get update
-          apt-get install -y git python sudo unixodbc-dev
       - name: Install
         run: |
-          sudo apt-get update
-          sudo apt-get purge libc++-dev libc++abi-dev
-          sudo apt-get autoremove
-          sudo apt-get install -y curl make ${{ matrix.cc }} ${{ matrix.pkg }}
-      - name: Install CMake
-        run: |
-          curl -OL https://github.com/Kitware/CMake/releases/download/v3.27.1/cmake-3.27.1-linux-x86_64.tar.gz
-          tar -xf cmake-3.27.1-linux-x86_64.tar.gz
-          echo "${PWD}/cmake-3.27.1-linux-x86_64/bin" >> $GITHUB_PATH
+          apt-get -o DPkg::Lock::Timeout=120 update
+          apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends \
+            ca-certificates ccache clang-${{ matrix.clang }} cmake git \
+            libc++-${{ matrix.clang }}-dev libc++abi-${{ matrix.clang }}-dev make unixodbc-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Restore compiled objects
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /ccache
+          key: ccache-clang${{ matrix.clang }}-std${{ matrix.cxxstd }}-${{ github.sha }}
+          restore-keys: ccache-clang${{ matrix.clang }}-std${{ matrix.cxxstd }}-
       - name: Check
         run: |
-          echo && type clang++ && which clang++ && clang++ --version
-          echo CC=${CC} && echo CXX=${CXX} && type ${CXX} && which ${CXX} && ${CXX} --version
-          echo && type cmake && which cmake && cmake --version
+          ${CXX} --version
+          cmake --version
       - name: Configure
         run: |
-          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=${{matrix.cxxstd}}
+          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=${{ matrix.cxxstd }} -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: |
-          cmake --build ${GITHUB_WORKSPACE}/build
+          cmake --build ${GITHUB_WORKSPACE}/build --parallel
 
   test-utility:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install
         run: |
-          sudo apt-get update
-          sudo apt-get install -y unixodbc-dev
+          sudo apt-get -o DPkg::Lock::Timeout=120 update
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y ccache unixodbc-dev
+      - name: Restore compiled objects
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ccache
+          key: ccache-utility-${{ github.sha }}
+          restore-keys: ccache-utility-
       - name: Configure
         run: |
-          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release
+          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: |
-          cmake --build ${GITHUB_WORKSPACE}/build --target utility_tests
+          cmake --build ${GITHUB_WORKSPACE}/build --parallel --target utility_tests
       - name: Test
         run: |
           ctest --test-dir ${GITHUB_WORKSPACE}/build --output-on-failure --no-tests=error -R utility_tests
 
+  # Coverage of the library, driven by the suites that can run here: the utility tests, the
+  # SQLite tests and the PostgreSQL tests. Clang records which regions of an expression ran,
+  # not merely which lines were reached, so the percentages are stricter than gcov's.
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    services:
+      postgresql:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nanodbc
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      # Table valued parameters and datetimeoffset are SQL Server features, and account for
+      # most of the library that the other backends cannot reach.
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          SA_PASSWORD: Password!123
+        ports:
+          - 1433:1433
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=120 update
+          # libclang-rt-dev carries the profiling runtime, without which the instrumented
+          # build does not link. libc++ is installed because NANODBC_FORCE_LIBCXX turns
+          # itself on wherever clang accepts -stdlib=libc++, whether or not its headers
+          # are actually present.
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y ccache clang libclang-rt-dev libc++-dev libc++abi-dev llvm \
+            unixodbc-dev odbc-postgresql libsqliteodbc
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+          curl "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list" \
+            | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get -o DPkg::Lock::Timeout=120 update
+          sudo ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=120 install -y msodbcsql17
+          sudo odbcinst -i -d -f /usr/share/sqliteodbc/unixodbc.ini
+      - name: Restore compiled objects
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ccache
+          key: ccache-coverage-${{ github.sha }}
+          restore-keys: ccache-coverage-
+      - name: Configure
+        run: |
+          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build \
+            -DCMAKE_BUILD_TYPE=Debug -DNANODBC_ENABLE_COVERAGE=ON \
+            -DNANODBC_BUILD_EXAMPLES=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        env:
+          CC: clang
+          CXX: clang++
+      - name: Build
+        run: cmake --build ${GITHUB_WORKSPACE}/build --parallel
+      - name: Run the suites
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/profraw"
+          export NANODBC_TEST_CONNSTR_PGSQL="Driver={PostgreSQL ANSI};Server=localhost;Port=5432;Database=nanodbc;UID=postgres;PWD=postgres"
+          export NANODBC_TEST_CONNSTR_MSSQL="Driver={ODBC Driver 17 for SQL Server};Server=localhost;Database=master;UID=sa;PWD=Password!123;"
+          for suite in utility sqlite postgresql mssql; do
+            LLVM_PROFILE_FILE="${GITHUB_WORKSPACE}/profraw/${suite}-%p.profraw" \
+              "${GITHUB_WORKSPACE}/build/test/${suite}_tests"
+          done
+      - name: Report
+        run: |
+          llvm-profdata merge -sparse ${GITHUB_WORKSPACE}/profraw/*.profraw \
+            -o ${GITHUB_WORKSPACE}/coverage.profdata
+          # llvm-cov takes the first binary positionally and the rest after -object.
+          binaries=("${GITHUB_WORKSPACE}/build/test/utility_tests"
+                    -object "${GITHUB_WORKSPACE}/build/test/sqlite_tests"
+                    -object "${GITHUB_WORKSPACE}/build/test/postgresql_tests"
+                    -object "${GITHUB_WORKSPACE}/build/test/mssql_tests")
+          llvm-cov export -format=lcov "${binaries[@]}" \
+            -instr-profile="${GITHUB_WORKSPACE}/coverage.profdata" \
+            "${GITHUB_WORKSPACE}/nanodbc/" > "${GITHUB_WORKSPACE}/coverage.lcov"
+          llvm-cov report "${binaries[@]}" \
+            -instr-profile="${GITHUB_WORKSPACE}/coverage.profdata" \
+            "${GITHUB_WORKSPACE}/nanodbc/" > "${GITHUB_WORKSPACE}/coverage-report.txt"
+          llvm-cov export -summary-only "${binaries[@]}" \
+            -instr-profile="${GITHUB_WORKSPACE}/coverage.profdata" \
+            "${GITHUB_WORKSPACE}/nanodbc/" > "${GITHUB_WORKSPACE}/coverage-summary.json"
+          # One markdown body for the job summary and the pull request comment, and the
+          # shields document the badge reads off the branch a later step writes.
+          python3 - "${GITHUB_WORKSPACE}" <<'PYTHON'
+          import json, os, sys
+
+          workspace = sys.argv[1]
+          path = lambda name: os.path.join(workspace, name)
+
+          with open(path("coverage-summary.json")) as f:
+              totals = json.load(f)["data"][0]["totals"]
+          lines, regions, functions = (
+              totals["lines"]["percent"],
+              totals["regions"]["percent"],
+              totals["functions"]["percent"],
+          )
+
+          for threshold, color in ((50, "red"), (60, "orange"), (75, "yellow"), (90, "green")):
+              if lines < threshold:
+                  break
+          else:
+              color = "brightgreen"
+
+          with open(path("coverage.json"), "w") as f:
+              json.dump(
+                  {
+                      "schemaVersion": 1,
+                      "label": "coverage",
+                      "message": f"{lines:.1f}%",
+                      "color": color,
+                  },
+                  f,
+              )
+
+          with open(path("coverage-report.txt")) as f:
+              report = f.read().rstrip()
+
+          with open(path("coverage-comment.md"), "w") as f:
+              f.write(
+                  "<!-- nanodbc-coverage -->\n"
+                  "## Coverage\n\n"
+                  f"| lines | regions | functions |\n"
+                  f"| ----- | ------- | --------- |\n"
+                  f"| {lines:.1f}% | {regions:.1f}% | {functions:.1f}% |\n\n"
+                  "<details><summary>Per file</summary>\n\n"
+                  f"```\n{report}\n```\n\n"
+                  "</details>\n"
+              )
+          print(f"lines {lines:.1f}%  regions {regions:.1f}%  functions {functions:.1f}%")
+          PYTHON
+          cat "${GITHUB_WORKSPACE}/coverage-comment.md" >> "${GITHUB_STEP_SUMMARY}"
+      - name: Upload the lcov report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-lcov
+          path: coverage.lcov
+          overwrite: true
+      # A pull request from a fork gets a read only token, so the comment is only attempted
+      # for branches of this repository. Those runs still carry the report in their summary.
+      - name: Comment the coverage on the pull request
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Rewrite the comment this job made before rather than adding one per run.
+          existing="$(gh api "repos/${REPO}/issues/${NUMBER}/comments" --paginate \
+            --jq 'map(select(.body | startswith("<!-- nanodbc-coverage -->"))) | .[0].id // empty')"
+          if [ -n "${existing}" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" \
+              -F body=@"${GITHUB_WORKSPACE}/coverage-comment.md" > /dev/null
+          else
+            gh api "repos/${REPO}/issues/${NUMBER}/comments" \
+              -F body=@"${GITHUB_WORKSPACE}/coverage-comment.md" > /dev/null
+          fi
+      - name: Publish the coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The branch carries the one file and no history, so it is rewritten each time
+          # rather than accumulating a commit per run.
+          work="$(mktemp -d)"
+          cp "${GITHUB_WORKSPACE}/coverage.json" "${work}/"
+          cd "${work}"
+          git init -q
+          git checkout -qb badges
+          git add coverage.json
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -qm "Coverage badge for ${GITHUB_SHA}"
+          git push -q --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
+
   test-postgresql:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -224,13 +374,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install
         run: |
-          sudo apt-get install -y unixodbc-dev odbc-postgresql
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y ccache unixodbc-dev odbc-postgresql
+      - name: Restore compiled objects
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ccache
+          key: ccache-postgresql-${{ github.sha }}
+          restore-keys: ccache-postgresql-
       - name: Configure
         run: |
-          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release
+          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: |
-          cmake --build ${GITHUB_WORKSPACE}/build --target postgresql_tests
+          cmake --build ${GITHUB_WORKSPACE}/build --parallel --target postgresql_tests
       - name: Test
         run: |
           export NANODBC_TEST_CONNSTR_PGSQL="Driver={PostgreSQL ANSI};Server=localhost;Port=5432;Database=nanodbc;UID=postgres;PWD=postgres"
@@ -238,6 +394,7 @@ jobs:
 
   test-mssql:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       sqlserver:
         image: mcr.microsoft.com/mssql/server:2022-latest
@@ -250,17 +407,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install
         run: |
-          apt-get update
+          apt-get -o DPkg::Lock::Timeout=120 update
           curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
           curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list > /etc/apt/sources.list.d/mssql-release.list
-          ACCEPT_EULA=Y apt-get install -y unixodbc-dev msodbcsql17
+          ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=120 install -y ccache unixodbc-dev msodbcsql17
         shell: sudo bash {0}
+      - name: Restore compiled objects
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ccache
+          key: ccache-mssql-${{ github.sha }}
+          restore-keys: ccache-mssql-
       - name: Configure
         run: |
-          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release
+          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: |
-          cmake --build ${GITHUB_WORKSPACE}/build --target mssql_tests
+          cmake --build ${GITHUB_WORKSPACE}/build --parallel --target mssql_tests
       - name: Test
         run: |
           export NANODBC_TEST_CONNSTR_MSSQL="Driver={ODBC Driver 17 for SQL Server};Server=localhost;Database=master;UID=sa;PWD=Password!123;"
@@ -268,11 +431,12 @@ jobs:
 
   test-sqlite:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install
         run: |
-          apt-get install -y unixodbc-dev libsqliteodbc
+          apt-get -o DPkg::Lock::Timeout=120 install -y ccache unixodbc-dev libsqliteodbc
           cat <<EOF > ${GITHUB_WORKSPACE}/.odbcinst.ini
           [SQLite3]
           Description=SQLite 3 ODBC Driver
@@ -283,12 +447,18 @@ jobs:
           sudo odbcinst -i -d -f ${GITHUB_WORKSPACE}/.odbcinst.ini
           cat /etc/odbcinst.ini
         shell: sudo bash {0}
+      - name: Restore compiled objects
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ccache
+          key: ccache-sqlite-${{ github.sha }}
+          restore-keys: ccache-sqlite-
       - name: Configure
         run: |
-          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release
+          cmake -S ${GITHUB_WORKSPACE} -B ${GITHUB_WORKSPACE}/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: |
-          cmake --build ${GITHUB_WORKSPACE}/build --target sqlite_tests
+          cmake --build ${GITHUB_WORKSPACE}/build --parallel --target sqlite_tests
       - name: Test
         run: |
           ctest --test-dir ${GITHUB_WORKSPACE}/build --output-on-failure --no-tests=error -R sqlite_tests

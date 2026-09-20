@@ -30,14 +30,25 @@ cmake_policy( SET CMP0127 NEW )
 # nanodbc specific options
 option( NANODBC_DISABLE_ASYNC "Disable async features entirely (default off)" OFF )
 option( NANODBC_DISABLE_MSSQL_TVP "Do not use MSSQL Table-valued parameter (default off)" OFF )
-option( NANODBC_DISABLE_ASYNC "Disable async features entirely (default off)" OFF )
 option( NANODBC_ENABLE_UNICODE "Enable Unicode support (default on)" OFF )
 option( NANODBC_ENABLE_WORKAROUND_NODATA "Enable SQL_NO_DATA workaround (see Issue #33) (default off)" OFF )
 
 include( CheckCXXCompilerFlag )
 check_cxx_compiler_flag( "-stdlib=libc++" CXX_COMPILER_SUPPORTS_LIBCXX )
 check_cxx_compiler_flag( "-Werror" CXX_COMPILER_SUPPORTS_WERROR )
-check_cxx_compiler_flag( "--coverage -O0" CXX_COMPILER_SUPPORTS_COVERAGE )
+# Coverage is instrumented differently by each compiler, so ask about the flags that will
+# actually be used. They have to reach the link line as well, or the check fails on the
+# profiling runtime being missing rather than on the flag being unsupported.
+if( CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
+  set( NANODBC_COVERAGE_COMPILE_OPTIONS -fprofile-instr-generate -fcoverage-mapping -O0 -g )
+  set( NANODBC_COVERAGE_LINK_OPTIONS -fprofile-instr-generate )
+else()
+  set( NANODBC_COVERAGE_COMPILE_OPTIONS --coverage -O0 -g )
+  set( NANODBC_COVERAGE_LINK_OPTIONS --coverage )
+endif()
+set( CMAKE_REQUIRED_LINK_OPTIONS ${NANODBC_COVERAGE_LINK_OPTIONS} )
+check_cxx_compiler_flag( "${NANODBC_COVERAGE_COMPILE_OPTIONS}" CXX_COMPILER_SUPPORTS_COVERAGE )
+unset( CMAKE_REQUIRED_LINK_OPTIONS )
 
 include( CMakeDependentOption )
 cmake_dependent_option( NANODBC_FORCE_LIBCXX "Force the use of libc++ (default on if compiler supports it)" ON "CXX_COMPILER_SUPPORTS_LIBCXX" OFF )
@@ -165,6 +176,33 @@ endif()
 
 message( STATUS "nanodbc feature: Allocate buffers of sufficient length such that Unicode can be stored in VAR/CHAR columns - ${NANODBC_OVERALLOCATE_CHAR}" )
 message( STATUS "nanodbc feature: Enable SQL_NO_DATA bug workaround - ${NANODBC_ENABLE_WORKAROUND_NODATA}" )
+
+# The async API is ODBC 3.8. nanodbc.h declares it without consulting the ODBC headers,
+# which it does not include, so whether the driver manager can back those declarations is
+# settled here and answered for every consumer of the target.
+if( NOT NANODBC_DISABLE_ASYNC )
+  include( CheckCXXSourceCompiles )
+  set( CMAKE_REQUIRED_INCLUDES ${ODBC_INCLUDE_DIRS} )
+  check_cxx_source_compiles( "
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <sql.h>
+#include <sqlext.h>
+int main()
+{
+    return SQL_ATTR_ASYNC_DBC_EVENT + SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE +
+           SQL_ATTR_ASYNC_STMT_EVENT + SQL_API_SQLCOMPLETEASYNC;
+}
+" ODBC_HEADERS_SUPPORT_ASYNC )
+  unset( CMAKE_REQUIRED_INCLUDES )
+
+  if( NOT ODBC_HEADERS_SUPPORT_ASYNC )
+    message( STATUS "nanodbc feature: ODBC headers predate 3.8, async features unavailable" )
+    set( NANODBC_DISABLE_ASYNC ON )
+  endif()
+endif()
+
 message( STATUS "nanodbc feature: Disable async features - ${NANODBC_DISABLE_ASYNC}" )
 message( STATUS "nanodbc feature: Disable MSSQL Table-valued parameter - ${NANODBC_DISABLE_MSSQL_TVP}" )
 
@@ -214,9 +252,11 @@ endif()
 message( STATUS "nanodbc build: Enable test coverage - ${NANODBC_ENABLE_COVERAGE}" )
 
 if( NANODBC_ENABLE_COVERAGE )
-  target_compile_options( nanodbc PUBLIC --coverage -O0 )
-  find_library( gcov gcov )
-  target_link_libraries( nanodbc PUBLIC gcov )
+  # Clang instruments source based coverage, recording which regions of an expression ran
+  # rather than only which lines were reached; llvm-cov reads the result out of the binary.
+  # GCC instruments gcov.
+  target_compile_options( nanodbc PUBLIC ${NANODBC_COVERAGE_COMPILE_OPTIONS} )
+  target_link_options( nanodbc PUBLIC ${NANODBC_COVERAGE_LINK_OPTIONS} )
 endif()
 
 # #######################################

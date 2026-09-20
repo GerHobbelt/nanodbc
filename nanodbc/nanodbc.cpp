@@ -345,14 +345,14 @@ inline std::size_t size(NANODBC_SQLCHAR const (&array)[N]) noexcept
 
 // Conversion between UTF-8 and the wide encoding the driver manager expects.
 //
-// std::wstring_convert and the std::codecvt facets that used to do this were deprecated in
-// C++17 and removed in C++26. The encoding follows from the width of wide_char_t: four
-// bytes is UTF-32, which is what iODBC takes, and two bytes is UTF-16, which is what every
-// other driver manager takes.
+// std::wstring_convert and the std::codecvt facets are deprecated in C++17 and removed in
+// C++26, so the conversion is done here. The encoding follows from the width of
+// wide_char_t: four bytes is UTF-32, which is what iODBC takes, and two bytes is UTF-16,
+// which is what every other driver manager takes.
 //
-// Malformed input throws std::range_error, as std::wstring_convert did, rather than being
-// silently replaced. A driver handing back text that does not decode is worth hearing
-// about instead of quietly turning into replacement characters.
+// Malformed input throws std::range_error rather than being silently replaced. A driver
+// handing back text that does not decode is worth hearing about instead of quietly turning
+// into replacement characters.
 
 inline void throw_invalid_encoding()
 {
@@ -1664,9 +1664,17 @@ string connection::connection_impl::database_name() const
 }
 
 template string connection::get_info(short info_type) const;
+
+// SQLUSMALLINT, SQLUINTEGER and SQLULEN are spelled with different underlying types from
+// one platform to the next, and the fixed width names callers reach for do not always
+// agree with them: here SQLULEN is unsigned long while uint64_t is unsigned long long, so
+// naming one leaves the other undefined at link time. The four fundamental unsigned types
+// are always distinct from each other and between them cover every spelling of these three
+// on every platform, so every correct way of asking links.
 template unsigned short connection::get_info(short info_type) const;
-template uint32_t connection::get_info(short info_type) const;
-template uint64_t connection::get_info(short info_type) const;
+template unsigned int connection::get_info(short info_type) const;
+template unsigned long connection::get_info(short info_type) const;
+template unsigned long long connection::get_info(short info_type) const;
 
 } // namespace nanodbc
 
@@ -4345,7 +4353,7 @@ private:
                     col.clen_ = sizeof(int16_t);
                 }
                 break;
-            case SQL_INTEGER: // TODO: Can be 32 or 64 bit? Then sizeof(SQLINTEGER)
+            case SQL_INTEGER:
                 if (is_unsigned)
                 {
                     col.ctype_ = SQL_C_ULONG;
@@ -4797,61 +4805,25 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
         return;
     }
 
+    // std::to_string renders each of these the way the SQL type demands: "%d" and "%lld"
+    // for the integers, "%f" for the floating point types, whose scale is undefined for a
+    // column and so is left to run to as many digits as it takes.
     case SQL_C_LONG:
     case SQL_C_SLONG:
-    {
-        std::string buffer(column_size + 1, 0); // ensure terminating null
-        const int32_t data = *ensure_pdata<int32_t>(column);
-        const int bytes =
-            std::snprintf(const_cast<char*>(buffer.data()), column_size + 1, "%d", data);
-        if (bytes == -1)
-            throw type_incompatible_error();
-        convert(buffer.data(), result); // passing the C pointer drops trailing nulls
+        convert(std::to_string(*ensure_pdata<int32_t>(column)), result);
         return;
-    }
 
     case SQL_C_SBIGINT:
-    {
-        using namespace std;                    // in case intmax_t is in namespace std
-        std::string buffer(column_size + 1, 0); // ensure terminating null
-        const intmax_t data = (intmax_t)*ensure_pdata<int64_t>(column);
-        const int bytes =
-            std::snprintf(const_cast<char*>(buffer.data()), column_size + 1, "%jd", data);
-        if (bytes == -1)
-            throw type_incompatible_error();
-        convert(buffer.data(), result); // passing the C pointer drops trailing nulls
+        convert(std::to_string(*ensure_pdata<int64_t>(column)), result);
         return;
-    }
 
     case SQL_C_FLOAT:
-    {
-        std::string buffer(column_size + 1, 0); // ensure terminating null
-        const float data = *ensure_pdata<float>(column);
-        const int bytes =
-            std::snprintf(const_cast<char*>(buffer.data()), column_size + 1, "%f", data);
-        if (bytes == -1)
-            throw type_incompatible_error();
-        convert(buffer.data(), result); // passing the C pointer drops trailing nulls
+        convert(std::to_string(*ensure_pdata<float>(column)), result);
         return;
-    }
 
     case SQL_C_DOUBLE:
-    {
-        const SQLULEN width = column_size + 2; // account for decimal mark and sign
-        std::string buffer(width + 1, 0);      // ensure terminating null
-        const double data = *ensure_pdata<double>(column);
-        const int bytes = std::snprintf(
-            const_cast<char*>(buffer.data()),
-            width + 1,
-            "%f", // do not restrict the number of digits, because for floating-point
-                  // columns the scale is undefined - number of digits to the right
-                  // of the decimal point is not fixed
-            data);
-        if (bytes == -1)
-            throw type_incompatible_error();
-        convert(buffer.data(), result); // passing the C pointer drops trailing nulls
+        convert(std::to_string(*ensure_pdata<double>(column)), result);
         return;
-    }
 
     case SQL_C_DATE:
     {
@@ -5002,8 +4974,8 @@ inline void result::result_impl::get_ref_impl<_variant_t>(short column, _variant
     bound_column& col = bound_columns_[column];
     auto c_type = col.ctype_;
 
-    // SQL type to C type mapping could have been simplified by auto-binding
-    // FIXME: Correct the auto_bind_columns to not to 'flatten' types
+    // Column binding maps several SQL types onto one C type, so where that is too coarse to
+    // pick a VARIANT type the SQL type decides instead.
     auto const sql_type = col.sqltype_;
     switch (sql_type)
     {
@@ -5020,7 +4992,6 @@ inline void result::result_impl::get_ref_impl<_variant_t>(short column, _variant
     {
     case SQL_C_BINARY:
     {
-        // TODO: Optimise with bespoke implementation of get_ref_impl<SAFEARRAY>
         std::vector<std::uint8_t> v;
         get_ref_impl(column, v);
         ::SAFEARRAYBOUND bounds[1] = {static_cast<unsigned long>(v.size()), 0};
@@ -5102,8 +5073,8 @@ inline void result::result_impl::get_ref_impl<_variant_t>(short column, _variant
         break;
     case SQL_C_NUMERIC:
     {
-        // FIXME: Likely, this is never called as SQL_DECIMAL is auto-bound as SQL_C_CHAR
-        // TODO: Review this for SQL Server (and other databases?) types money, smallmoney as VT_CY
+        // SQL Server money and smallmoney arrive as SQL_DECIMAL, so they are carried as
+        // VT_DECIMAL rather than the VT_CY the currency types would otherwise suggest.
         std::wstring v;
         get_ref_impl(column, v);
         DECIMAL d{0};

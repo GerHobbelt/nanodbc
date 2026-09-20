@@ -5,8 +5,23 @@ if(DEFINED ENV{CI})
 endif()
 add_compile_definitions( "$<$<CXX_COMPILER_ID:MSVC>:_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING>" )
 
-# Prepare "Catch" library for other executables
-add_library(Catch INTERFACE)
+# Catch2 v3 is vendored as its amalgamated distribution, so the tests still build with no
+# network access. It is a large translation unit, so it is compiled once and every test
+# program brings its own main(), rather than building it a second time only to get the
+# main() the amalgamation would otherwise supply.
+add_library(Catch STATIC catch/catch_amalgamated.cpp)
+target_compile_definitions(Catch PRIVATE CATCH_AMALGAMATED_CUSTOM_MAIN)
+target_include_directories(Catch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(Catch PUBLIC cxx_std_14)
+
+# Catch is compiled on its own, so it needs the same standard library selection as
+# everything it links with. Left to itself it builds against the default library and the
+# link fails on missing symbols.
+if(NANODBC_FORCE_LIBCXX)
+  target_compile_options(Catch PUBLIC -stdlib=libc++)
+  target_link_options(Catch PUBLIC -stdlib=libc++ -lc++abi)
+endif()
+
 add_custom_target(tests)
 
 message( STATUS "Building utility tests")

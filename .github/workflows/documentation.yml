@@ -14,9 +14,16 @@ on:
     paths:
       - "doc/**"
       - "nanodbc/**"
+# One run per workflow per ref. A new push cancels the run it superseded, except on main,
+# where each merge should be allowed to finish reporting.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -30,5 +37,3 @@ jobs:
       - name: Build Documentation
         run: make html
         working-directory: ./doc
-    # TODO: Parse warnings
-    # TODO: Deploy to gh-pages without removing existing folders with docs of historical releases

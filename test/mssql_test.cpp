@@ -621,8 +621,9 @@ TEST_CASE_METHOD(
     "[mssql][blob][varchar][unbound]")
 {
     // This test is based on https://knowledgebase.progress.com/articles/Article/9384,
-    // it illustrates a canonical sitaution leading to the Invalid Descriptor Index error.
-    // TODO: Port it to database-agnostic tests.
+    // it illustrates a canonical situation leading to the Invalid Descriptor Index error.
+    // It stays here because the restriction is the SQL Server driver's own: the PostgreSQL,
+    // MySQL and SQLite drivers read the same columns in the same order without complaint.
 
     nanodbc::connection connection = connect();
     create_table(
@@ -644,7 +645,8 @@ TEST_CASE_METHOD(
         REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 1);
         REQUIRE_THROWS_WITH(
-            results.get<nanodbc::string>(1), Catch::Contains("07009")); // Invalid Descriptor Index
+            results.get<nanodbc::string>(1),
+            Catch::Matchers::ContainsSubstring("07009")); // Invalid Descriptor Index
     }
 
     // Query bound first, then unbound.
@@ -686,7 +688,8 @@ TEST_CASE_METHOD(
         REQUIRE(results.get<int>(1) == 11);
         REQUIRE(results.get<nanodbc::string>(3) == NANODBC_TEXT("this is text"));
         REQUIRE_THROWS_WITH(
-            results.get<nanodbc::string>(2), Catch::Contains("07009")); // Invalid Descriptor Index
+            results.get<nanodbc::string>(2),
+            Catch::Matchers::ContainsSubstring("07009")); // Invalid Descriptor Index
     }
 
     // Query bound and unbound interleaved.
@@ -716,7 +719,8 @@ TEST_CASE_METHOD(
         REQUIRE(results.next());
         REQUIRE(results.get<nanodbc::string>(1) == NANODBC_TEXT("this is varchar max"));
         REQUIRE_THROWS_WITH(
-            results.get<int>(0), Catch::Contains("07009")); // Invalid Descriptor Index
+            results.get<int>(0),
+            Catch::Matchers::ContainsSubstring("07009")); // Invalid Descriptor Index
     }
 
     // Query bound and unbound interleaved.
@@ -895,20 +899,10 @@ TEST_CASE_METHOD(mssql_fixture, "test_execute_multiple", "[mssql][execute]")
     test_execute_multiple();
 }
 
-// FIXME(mloskot): Strange behaviour of SQLGetDescField on Linux with SQL Server, see
-// https://github.com/nanodbc/nanodbc/pull/342#issuecomment-2077942587
-#if defined(NANODBC_TEST_CI) && defined(CATCH_PLATFORM_LINUX)
-#define NANODBC_TESTS_SKIP_IRD 1
-#else
-#define NANODBC_TEST_SKIP_IRD_DUE_STRANGE_FAILURES_ON_LINUX 0
-#endif
-
-#if defined(NANODBC_TEST_SKIP_IRD_DUE_STRANGE_FAILURES_ON_LINUX)
 TEST_CASE_METHOD(mssql_fixture, "test_implementation_row_descriptor", "[mssql][descriptor][ird]")
 {
     test_implementation_row_descriptor();
 }
-#endif // defined(NANODBC_TEST_SKIP_IRD_DUE_STRANGE_FAILURES_ON_LINUX)
 
 TEST_CASE_METHOD(
     mssql_fixture,
@@ -1077,6 +1071,11 @@ TEST_CASE_METHOD(mssql_fixture, "test_integral_small_types_batch", "[mssql][inte
     test_integral_small_types_batch();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_integral_to_string_conversion", "[mssql][integral]")
+{
+    test_integral_to_string_conversion();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_move", "[mssql][move]")
 {
     test_move();
@@ -1102,6 +1101,34 @@ TEST_CASE_METHOD(mssql_fixture, "test_result_at_end", "[mssql][result]")
     test_result_at_end();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_temporal_conversions", "[mssql][date][time][timestamp]")
+{
+    test_temporal_conversions();
+}
+
+TEST_CASE_METHOD(
+    mssql_fixture,
+    "test_implementation_row_descriptor_fields",
+    "[mssql][descriptor][ird]")
+{
+    test_implementation_row_descriptor_fields();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_statement_open_close", "[mssql][statement]")
+{
+    test_statement_open_close();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_bind_null_sentry", "[mssql][statement]")
+{
+    test_bind_null_sentry();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_result_accessors", "[mssql][result][accessors]")
+{
+    test_result_accessors();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_result_iterator", "[mssql][result][iterator]")
 {
     test_result_iterator();
@@ -1123,7 +1150,8 @@ TEST_CASE_METHOD(mssql_fixture, "test_statement_with_empty_connection", "[mssql]
     c.allocate();
     nanodbc::statement s;
     REQUIRE_THROWS_AS(s.open(c), nanodbc::database_error);
-    REQUIRE_THROWS_WITH(s.open(c), Catch::Contains("08003")); // Connection not open
+    REQUIRE_THROWS_WITH(
+        s.open(c), Catch::Matchers::ContainsSubstring("08003")); // Connection not open
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_string", "[mssql][string]")
@@ -1391,6 +1419,49 @@ TEST_CASE_METHOD(mssql_fixture, "test_datetimeoffset", "[mssql][datetime]")
         REQUIRE(*it++ == '0');
         REQUIRE(*it++ == '-');
     }
+}
+
+// A datetimeoffset column answers to the narrower temporal types, and a date or datetime
+// column answers to timestampoffset, each through its own conversion.
+TEST_CASE_METHOD(mssql_fixture, "test_datetimeoffset_conversions", "[mssql][datetimeoffset]")
+{
+    auto connection = connect();
+    auto result = execute(
+        connection,
+        NANODBC_TEXT("SELECT CONVERT(datetimeoffset, '2006-12-30T13:45:12.345-08:30', 127) AS dto,"
+                     " CONVERT(date, '2006-12-30', 23) AS d,"
+                     " CONVERT(datetime, '2006-12-30T13:45:12', 126) AS dt;"));
+    REQUIRE(result.next());
+
+    // datetimeoffset read as the narrower types
+    auto const as_date = result.get<nanodbc::date>(0);
+    REQUIRE(as_date.year == 2006);
+    REQUIRE(as_date.month == 12);
+    REQUIRE(as_date.day == 30);
+
+    auto const as_time = result.get<nanodbc::time>(0);
+    REQUIRE(as_time.hour == 13);
+    REQUIRE(as_time.min == 45);
+    REQUIRE(as_time.sec == 12);
+
+    auto const as_stamp = result.get<nanodbc::timestamp>(0);
+    REQUIRE(as_stamp.year == 2006);
+    REQUIRE(as_stamp.month == 12);
+    REQUIRE(as_stamp.day == 30);
+    REQUIRE(as_stamp.hour == 13);
+
+    // date and datetime read as timestampoffset, which they carry no offset for
+    auto const date_as_offset = result.get<nanodbc::timestampoffset>(1);
+    REQUIRE(date_as_offset.stamp.year == 2006);
+    REQUIRE(date_as_offset.stamp.month == 12);
+    REQUIRE(date_as_offset.stamp.day == 30);
+
+    auto const stamp_as_offset = result.get<nanodbc::timestampoffset>(2);
+    REQUIRE(stamp_as_offset.stamp.year == 2006);
+    REQUIRE(stamp_as_offset.stamp.hour == 13);
+    REQUIRE(stamp_as_offset.stamp.min == 45);
+
+    REQUIRE(!result.next());
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_datetimeoffset2", "[mssql][datetimeoffset]")
@@ -1778,6 +1849,41 @@ TEST_CASE_METHOD(
     auto result = stmt.execute();
     REQUIRE(!result.next());
     REQUIRE(0 == result.rows());
+}
+
+// Describing the columns up front is what parameter_type, parameter_size and
+// parameter_scale then report, in place of asking the driver.
+TEST_CASE_METHOD(
+    mssql_table_valued_parameter_fixture,
+    "test_table_valued_parameter_described",
+    "[mssql][table_valued_paramter]")
+{
+    auto conn = connect();
+    auto stmt = nanodbc::statement(conn);
+    stmt.prepare(NANODBC_TEXT("{ CALL tvp_test(?, ?, ?) }"));
+
+    auto p1 = nanodbc::table_valued_parameter(stmt, 1, num_rows_);
+
+    std::vector<short> const idx{0, 1, 2, 3, 4};
+    std::vector<short> const type{
+        SQL_INTEGER, SQL_BIGINT, SQL_VARCHAR, SQL_WVARCHAR, SQL_VARBINARY};
+    std::vector<unsigned long> const size{10, 19, 60, 60, 100};
+    std::vector<short> const scale{0, 0, 0, 0, 0};
+    p1.describe_parameters(idx, type, size, scale);
+
+    REQUIRE(p1.parameters() == 5);
+    for (short i = 0; i < 5; ++i)
+    {
+        REQUIRE(p1.parameter_type(i) == type[static_cast<std::size_t>(i)]);
+        REQUIRE(p1.parameter_size(i) == size[static_cast<std::size_t>(i)]);
+        REQUIRE(p1.parameter_scale(i) == scale[static_cast<std::size_t>(i)]);
+    }
+
+    std::vector<short> const too_few{SQL_INTEGER};
+    REQUIRE_THROWS_AS(
+        p1.describe_parameters(idx, too_few, size, scale), nanodbc::programming_error);
+
+    p1.close();
 }
 
 TEST_CASE_METHOD(

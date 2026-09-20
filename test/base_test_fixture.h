@@ -1,7 +1,7 @@
 #ifndef NANODBC_TEST_BASE_FIXTURE_H
 #define NANODBC_TEST_BASE_FIXTURE_H
 
-#include "catch/catch.hpp"
+#include "catch/catch_amalgamated.hpp"
 
 #include <nanodbc/nanodbc.h>
 
@@ -193,11 +193,10 @@ struct Config
     std::string connection_string_;
     std::string data_path_;
     std::string test_; // if set, itis test name, pattern or tags
-    bool show_help_{false};
 };
 
 // Custom matcher for Catch to use with REQUIRE_THAT(a, IsAnyOf({a, b, c}));
-class IntAnyOf : public Catch::MatcherBase<int>
+class IntAnyOf : public Catch::Matchers::MatcherBase<int>
 {
     std::vector<int> m_values;
 
@@ -317,6 +316,18 @@ struct base_test_fixture
             return NANODBC_TEXT("bytea");
         default:
             return NANODBC_TEXT("varbinary") + s; // Oracle, MySQL, SQL Server,...standard type?
+        }
+    }
+
+    nanodbc::string get_timestamp_type_name()
+    {
+        switch (vendor_)
+        {
+        case database_vendor::mysql:
+        case database_vendor::sqlserver:
+            return NANODBC_TEXT("datetime");
+        default:
+            return NANODBC_TEXT("timestamp");
         }
     }
 
@@ -550,9 +561,8 @@ struct base_test_fixture
 
             bool operator()(char_type const& lhs, char_type const& rhs)
             {
-                // FIXME: This is ugly, but ctype<char16_t> and ctype<char32_t> specializations
-                // are not mandatory according to the C++11, only for char and wchar_t are.
-                // So, use the one with bigger capacity of the two.
+                // Only ctype<char> and ctype<wchar_t> are required to exist, so char16_t
+                // and char32_t are folded through the wider of the two.
                 return std::toupper<wchar_t>(lhs, loc_) == std::toupper<wchar_t>(rhs, loc_);
             }
 
