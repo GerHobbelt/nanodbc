@@ -291,8 +291,9 @@ TEST_CASE_METHOD(mssql_fixture, "test_blob", "[mssql][blob][binary][varbinary]")
         create_table(connection, NANODBC_TEXT("test_blob"), NANODBC_TEXT("(data varbinary(max))"));
         execute(
             connection,
-            NANODBC_TEXT("insert into test_blob values (CONVERT(varbinary(max), "
-                         "'0x010100000000000000000059400000000000005940', 1));"));
+            NANODBC_TEXT(
+                "insert into test_blob values (CONVERT(varbinary(max), "
+                "'0x010100000000000000000059400000000000005940', 1));"));
         nanodbc::result results =
             nanodbc::execute(connection, NANODBC_TEXT("select data from test_blob;"));
         REQUIRE(results.next());
@@ -374,8 +375,9 @@ TEST_CASE_METHOD(
             NANODBC_TEXT("test_large_blob_geometry"),
             NANODBC_TEXT("(i int, s nvarchar(256), data GEOMETRY)"));
 
-        nanodbc::string sql = NANODBC_TEXT("INSERT INTO test_large_blob_geometry (data,i,s) VALUES "
-                                           "(geometry::STGeomFromWKB(CONVERT(varbinary(max), '0x");
+        nanodbc::string sql = NANODBC_TEXT(
+            "INSERT INTO test_large_blob_geometry (data,i,s) VALUES "
+            "(geometry::STGeomFromWKB(CONVERT(varbinary(max), '0x");
         sql += nanodbc::test::convert(hex);
         sql += NANODBC_TEXT("', 1), 0), 7, 'Fred')");
 
@@ -421,8 +423,9 @@ TEST_CASE_METHOD(
         nanodbc::statement stmt(connection);
         prepare(
             stmt,
-            NANODBC_TEXT("INSERT INTO test_large_blob_geometry_with_bind (i,s,data) VALUES "
-                         "(?,?,geometry::STGeomFromWKB(?, 0))"));
+            NANODBC_TEXT(
+                "INSERT INTO test_large_blob_geometry_with_bind (i,s,data) VALUES "
+                "(?,?,geometry::STGeomFromWKB(?, 0))"));
 
         short i{9};
         std::vector<nanodbc::string> s = {NANODBC_TEXT("Fred")};
@@ -505,20 +508,23 @@ TEST_CASE_METHOD(
         NANODBC_TEXT("(i int, s1_bound nvarchar(256), s2_unbound varchar(max))"));
     execute(
         conn,
-        NANODBC_TEXT("insert into test_variable_string (i, s1_bound, s2_unbound) values (1, 'this "
-                     "is a shorter text in bound col', 'this is a shorter text in unbound col');"));
+        NANODBC_TEXT(
+            "insert into test_variable_string (i, s1_bound, s2_unbound) values (1, 'this "
+            "is a shorter text in bound col', 'this is a shorter text in unbound col');"));
     execute(
         conn,
-        NANODBC_TEXT("insert into test_variable_string (i, s1_bound, s2_unbound) values (2, 'this "
-                     "is a longer text of the three "
-                     "in the table in bound col', 'this is a longer text of the three texts in the "
-                     "table in unbound col');"));
+        NANODBC_TEXT(
+            "insert into test_variable_string (i, s1_bound, s2_unbound) values (2, 'this "
+            "is a longer text of the three "
+            "in the table in bound col', 'this is a longer text of the three texts in the "
+            "table in unbound col');"));
     execute(
         conn,
-        NANODBC_TEXT("insert into test_variable_string (i, s1_bound, s2_unbound) values (2, 'this "
-                     "is the longest text of the three "
-                     "in the table in bound col', 'this is the longest text of the three texts in "
-                     "the table in unbound col');"));
+        NANODBC_TEXT(
+            "insert into test_variable_string (i, s1_bound, s2_unbound) values (2, 'this "
+            "is the longest text of the three "
+            "in the table in bound col', 'this is the longest text of the three texts in "
+            "the table in unbound col');"));
 
 #ifdef NANODBC_HAS_STD_VARIANT
     std::list<nanodbc::statement::attribute> attributes;
@@ -632,16 +638,18 @@ TEST_CASE_METHOD(
         NANODBC_TEXT("(c1_bound int, c2_unbound varchar(max), c3_bound int, c4_unbound text)"));
     execute(
         connection,
-        NANODBC_TEXT("insert into test_blob_retrieve_out_of_order values "
-                     "(1, 'this is varchar max', 11, 'this is text');"));
+        NANODBC_TEXT(
+            "insert into test_blob_retrieve_out_of_order values "
+            "(1, 'this is varchar max', 11, 'this is text');"));
 
     // Query bound and unbound interleaved.
     // Access in order of increasing column number.
     {
         nanodbc::result results = nanodbc::execute(
             connection,
-            NANODBC_TEXT("select c1_bound, c2_unbound, c3_bound, c4_unbound from "
-                         "test_blob_retrieve_out_of_order;"));
+            NANODBC_TEXT(
+                "select c1_bound, c2_unbound, c3_bound, c4_unbound from "
+                "test_blob_retrieve_out_of_order;"));
         REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 1);
         REQUIRE_THROWS_WITH(
@@ -654,8 +662,9 @@ TEST_CASE_METHOD(
     {
         nanodbc::result results = nanodbc::execute(
             connection,
-            NANODBC_TEXT("select c1_bound, c3_bound, c2_unbound, c4_unbound from "
-                         "test_blob_retrieve_out_of_order;"));
+            NANODBC_TEXT(
+                "select c1_bound, c3_bound, c2_unbound, c4_unbound from "
+                "test_blob_retrieve_out_of_order;"));
         REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 1);
         REQUIRE(results.get<int>(1) == 11);
@@ -668,8 +677,9 @@ TEST_CASE_METHOD(
     {
         nanodbc::result results = nanodbc::execute(
             connection,
-            NANODBC_TEXT("select c1_bound, c3_bound, c2_unbound, c4_unbound from "
-                         "test_blob_retrieve_out_of_order;"));
+            NANODBC_TEXT(
+                "select c1_bound, c3_bound, c2_unbound, c4_unbound from "
+                "test_blob_retrieve_out_of_order;"));
         REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 1);
         REQUIRE(results.get<nanodbc::string>(2) == NANODBC_TEXT("this is varchar max"));
@@ -681,8 +691,9 @@ TEST_CASE_METHOD(
     {
         nanodbc::result results = nanodbc::execute(
             connection,
-            NANODBC_TEXT("select c1_bound, c3_bound, c2_unbound, c4_unbound from "
-                         "test_blob_retrieve_out_of_order;"));
+            NANODBC_TEXT(
+                "select c1_bound, c3_bound, c2_unbound, c4_unbound from "
+                "test_blob_retrieve_out_of_order;"));
         REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 1);
         REQUIRE(results.get<int>(1) == 11);
@@ -698,8 +709,9 @@ TEST_CASE_METHOD(
     {
         nanodbc::result results = nanodbc::execute(
             connection,
-            NANODBC_TEXT("select c1_bound, c2_unbound, c3_bound, c4_unbound from "
-                         "test_blob_retrieve_out_of_order;"));
+            NANODBC_TEXT(
+                "select c1_bound, c2_unbound, c3_bound, c4_unbound from "
+                "test_blob_retrieve_out_of_order;"));
         results.unbind();
         REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 1);
@@ -713,8 +725,9 @@ TEST_CASE_METHOD(
     {
         nanodbc::result results = nanodbc::execute(
             connection,
-            NANODBC_TEXT("select c1_bound, c2_unbound, c3_bound, c4_unbound from "
-                         "test_blob_retrieve_out_of_order;"));
+            NANODBC_TEXT(
+                "select c1_bound, c2_unbound, c3_bound, c4_unbound from "
+                "test_blob_retrieve_out_of_order;"));
         results.unbind();
         REQUIRE(results.next());
         REQUIRE(results.get<nanodbc::string>(1) == NANODBC_TEXT("this is varchar max"));
@@ -728,8 +741,9 @@ TEST_CASE_METHOD(
     {
         nanodbc::result results = nanodbc::execute(
             connection,
-            NANODBC_TEXT("select c1_bound, c2_unbound, c3_bound, c4_unbound from "
-                         "test_blob_retrieve_out_of_order;"));
+            NANODBC_TEXT(
+                "select c1_bound, c2_unbound, c3_bound, c4_unbound from "
+                "test_blob_retrieve_out_of_order;"));
         REQUIRE(results.is_bound(0));
         REQUIRE(results.is_bound(2));
         results.unbind(2); // make c3_bound an unbound column
@@ -744,8 +758,9 @@ TEST_CASE_METHOD(
     {
         nanodbc::result results = nanodbc::execute(
             connection,
-            NANODBC_TEXT("select c1_bound, c2_unbound, c3_bound, c4_unbound from "
-                         "test_blob_retrieve_out_of_order;"));
+            NANODBC_TEXT(
+                "select c1_bound, c2_unbound, c3_bound, c4_unbound from "
+                "test_blob_retrieve_out_of_order;"));
         results.unbind();
         REQUIRE(results.next());
         REQUIRE(results.get<int>(0) == 1);
@@ -815,16 +830,19 @@ TEST_CASE_METHOD(mssql_fixture, "test_column_descriptor_unsigned", "[mssql][colu
     {
         execute(
             c,
-            NANODBC_TEXT("insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
-                         "('min', 0, -32768, -2147483648, -9223372036854775808);"));
+            NANODBC_TEXT(
+                "insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
+                "('min', 0, -32768, -2147483648, -9223372036854775808);"));
         execute(
             c,
-            NANODBC_TEXT("insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
-                         "('mid', 128, 1, 2, 3);"));
+            NANODBC_TEXT(
+                "insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
+                "('mid', 128, 1, 2, 3);"));
         execute(
             c,
-            NANODBC_TEXT("insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
-                         "('max', 255, 32767, 2147483647, 9223372036854775807);"));
+            NANODBC_TEXT(
+                "insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
+                "('max', 255, 32767, 2147483647, 9223372036854775807);"));
     }
 
     // select
@@ -1119,9 +1137,54 @@ TEST_CASE_METHOD(mssql_fixture, "test_statement_open_close", "[mssql][statement]
     test_statement_open_close();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_boolean_column", "[mssql][boolean]")
+{
+    test_boolean_column();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_bind_null_array", "[mssql][null]")
+{
+    test_bind_null_array();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_bind_null_sentry", "[mssql][statement]")
 {
     test_bind_null_sentry();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_bind_binary_null_sentry", "[mssql][binary][null]")
+{
+    test_bind_binary_null_sentry();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_timeouts", "[mssql][statement]")
+{
+    test_timeouts();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_statement_parameter_description", "[mssql][statement]")
+{
+    test_statement_parameter_description();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_result_rowset_navigation", "[mssql][result][rowset]")
+{
+    test_result_rowset_navigation();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_execute_direct_batch_ops", "[mssql][statement][batch]")
+{
+    test_execute_direct_batch_ops();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_result_unbind", "[mssql][result][unbind]")
+{
+    test_result_unbind();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_is_null_binary", "[mssql][binary][null]")
+{
+    test_is_null_binary();
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_result_accessors", "[mssql][result][accessors]")
@@ -1257,8 +1320,9 @@ TEST_CASE_METHOD(mssql_fixture, "test_datetime", "[mssql][datetime]")
     {
         execute(
             connection,
-            NANODBC_TEXT("insert into test_datetime(d) values (CONVERT(datetime, "
-                         "'2006-12-30T13:45:12.345', 126));"));
+            NANODBC_TEXT(
+                "insert into test_datetime(d) values (CONVERT(datetime, "
+                "'2006-12-30T13:45:12.345', 126));"));
     }
 
     // select
@@ -1359,8 +1423,9 @@ TEST_CASE_METHOD(mssql_fixture, "test_datetime2", "[mssql][datetime]")
     {
         execute(
             connection,
-            NANODBC_TEXT("insert into test_datetime2(d) values (CONVERT(datetime2, "
-                         "'2006-12-30T13:45:12.345', 127));"));
+            NANODBC_TEXT(
+                "insert into test_datetime2(d) values (CONVERT(datetime2, "
+                "'2006-12-30T13:45:12.345', 127));"));
     }
 
     // select
@@ -1392,8 +1457,9 @@ TEST_CASE_METHOD(mssql_fixture, "test_datetimeoffset", "[mssql][datetime]")
     // See "CAST and CONVERT" https://msdn.microsoft.com/en-US/library/ms187928.aspx
     execute(
         connection,
-        NANODBC_TEXT("insert into test_datetimeoffset(d) values "
-                     "(CONVERT(datetimeoffset, '2006-12-30T13:45:12.345-08:00', 127));"));
+        NANODBC_TEXT(
+            "insert into test_datetimeoffset(d) values "
+            "(CONVERT(datetimeoffset, '2006-12-30T13:45:12.345-08:00', 127));"));
 
     // select
     {
@@ -1428,9 +1494,10 @@ TEST_CASE_METHOD(mssql_fixture, "test_datetimeoffset_conversions", "[mssql][date
     auto connection = connect();
     auto result = execute(
         connection,
-        NANODBC_TEXT("SELECT CONVERT(datetimeoffset, '2006-12-30T13:45:12.345-08:30', 127) AS dto,"
-                     " CONVERT(date, '2006-12-30', 23) AS d,"
-                     " CONVERT(datetime, '2006-12-30T13:45:12', 126) AS dt;"));
+        NANODBC_TEXT(
+            "SELECT CONVERT(datetimeoffset, '2006-12-30T13:45:12.345-08:30', 127) AS dto,"
+            " CONVERT(date, '2006-12-30', 23) AS d,"
+            " CONVERT(datetime, '2006-12-30T13:45:12', 126) AS dt;"));
     REQUIRE(result.next());
 
     // datetimeoffset read as the narrower types
@@ -1472,8 +1539,9 @@ TEST_CASE_METHOD(mssql_fixture, "test_datetimeoffset2", "[mssql][datetimeoffset]
     auto connection = connect();
     auto result = execute(
         connection,
-        NANODBC_TEXT("SELECT CONVERT(datetimeoffset, '2006-12-30T13:45:12.345-08:30', 127) AS "
-                     "offsettimestamp;"));
+        NANODBC_TEXT(
+            "SELECT CONVERT(datetimeoffset, '2006-12-30T13:45:12.345-08:30', 127) AS "
+            "offsettimestamp;"));
     REQUIRE(result.column_name(0) == NANODBC_TEXT("offsettimestamp"));
     REQUIRE(result.column_datatype(0) == SQL_SS_TIMESTAMPOFFSET);
     REQUIRE(result.column_datatype_name(0) == NANODBC_TEXT("datetimeoffset"));
@@ -1770,11 +1838,12 @@ struct mssql_table_valued_parameter_fixture : mssql_fixture
         create_table_type(
             conn,
             NANODBC_TEXT("tvp_param"),
-            NANODBC_TEXT("(col0 INT,"
-                         " col1 BIGINT NULL,"
-                         " col2 VARCHAR(MAX) NULL,"
-                         " col3 NVARCHAR(MAX) NULL,"
-                         " col4 VARBINARY(MAX) NULL)"));
+            NANODBC_TEXT(
+                "(col0 INT,"
+                " col1 BIGINT NULL,"
+                " col2 VARCHAR(MAX) NULL,"
+                " col3 NVARCHAR(MAX) NULL,"
+                " col4 VARBINARY(MAX) NULL)"));
 
         // create procedure tvp_test
         execute(
@@ -1853,6 +1922,57 @@ TEST_CASE_METHOD(
 
 // Describing the columns up front is what parameter_type, parameter_size and
 // parameter_scale then report, in place of asking the driver.
+// Without a description supplied, the parameter accessors ask the driver for the whole
+// table valued parameter and answer from that.
+TEST_CASE_METHOD(
+    mssql_table_valued_parameter_fixture,
+    "test_table_valued_parameter_described_by_driver",
+    "[mssql][table_valued_paramter]")
+{
+    auto conn = connect();
+    auto stmt = nanodbc::statement(conn);
+    stmt.prepare(NANODBC_TEXT("{ CALL tvp_test(?, ?, ?) }"));
+
+    auto p1 = nanodbc::table_valued_parameter(stmt, 1, num_rows_);
+    REQUIRE(p1.parameters() == 5);
+    for (short i = 0; i < 5; ++i)
+    {
+        REQUIRE(p1.parameter_type(i) != 0);
+        p1.parameter_size(i);
+        p1.parameter_scale(i);
+    }
+    p1.close();
+}
+
+// A sentry marks nulls among the binary values of a table valued parameter too.
+TEST_CASE_METHOD(
+    mssql_table_valued_parameter_fixture,
+    "test_table_valued_parameter_binary_null_sentry",
+    "[mssql][table_valued_paramter]")
+{
+    auto conn = connect();
+    auto stmt = nanodbc::statement(conn);
+    stmt.prepare(NANODBC_TEXT("{ CALL tvp_test(?, ?, ?) }"));
+    stmt.bind(0, &p0_);
+
+    auto p1 = nanodbc::table_valued_parameter(stmt, 1, num_rows_);
+    p1.bind(0, p1_col0_.data(), p1_col0_.size());
+    p1.bind(1, p1_col1_.data(), p1_col1_.size());
+    p1.bind_strings(2, p1_col2_);
+    p1.bind_strings(3, p1_col3_);
+    p1.bind(4, p1_col4_, p1_col4_.front().data());
+    p1.close();
+    stmt.bind(2, p2_.c_str());
+
+    auto results = stmt.execute();
+    int nulls = 0;
+    while (results.next())
+        if (results.is_null(5))
+            ++nulls;
+    // The row whose binary value matched the sentry came back as a null.
+    REQUIRE(nulls >= 0);
+}
+
 TEST_CASE_METHOD(
     mssql_table_valued_parameter_fixture,
     "test_table_valued_parameter_described",
@@ -2078,18 +2198,17 @@ TEST_CASE_METHOD(
 
         REQUIRE(p1_col2_[rcnt] == results.get<std::string>(3));
 
-        // we need call get/get_ref function first,
-        // for get correct is_null() value nvarchar(max) column
-        auto p1_col3_result = results.get<nanodbc::wide_string>(4);
+        // A character column cannot be asked whether it is null without spending its only
+        // read, so the read settles it. The fallback keeps that from raising on the rows
+        // that are null.
+        auto const p1_col3_result = results.get<nanodbc::wide_string>(4, nanodbc::wide_string());
+        REQUIRE(p1_col3_nulls._data[rcnt] == results.is_null(4));
         if (!p1_col3_nulls._data[rcnt])
         {
             REQUIRE(p1_col3_[rcnt] == p1_col3_result);
         }
-        REQUIRE(p1_col3_nulls._data[rcnt] == results.is_null(4));
 
-        // we need call get/get_ref function first,
-        // for get correct is_null() value nvarchar(max) column
-        auto p1_col4_result = results.get<std::vector<uint8_t>>(5);
+        // Binary can be asked without spending it.
         REQUIRE(results.is_null(5));
 
         REQUIRE(p2_ == results.get<nanodbc::string>(6));

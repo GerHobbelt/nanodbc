@@ -288,9 +288,63 @@ TEST_CASE_METHOD(postgresql_fixture, "test_statement_open_close", "[postgresql][
     test_statement_open_close();
 }
 
+TEST_CASE_METHOD(postgresql_fixture, "test_boolean_column", "[postgresql][boolean]")
+{
+    test_boolean_column();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_bind_null_array", "[postgresql][null]")
+{
+    test_bind_null_array();
+}
+
 TEST_CASE_METHOD(postgresql_fixture, "test_bind_null_sentry", "[postgresql][statement]")
 {
     test_bind_null_sentry();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_bind_binary_null_sentry", "[postgresql][binary][null]")
+{
+    test_bind_binary_null_sentry();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_timeouts", "[postgresql][statement]")
+{
+    test_timeouts();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_statement_parameter_description",
+    "[postgresql][statement]")
+{
+    test_statement_parameter_description();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_result_rowset_navigation",
+    "[postgresql][result][rowset]")
+{
+    test_result_rowset_navigation();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_execute_direct_batch_ops",
+    "[postgresql][statement][batch]")
+{
+    test_execute_direct_batch_ops();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_result_unbind", "[postgresql][result][unbind]")
+{
+    test_result_unbind();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_is_null_binary", "[postgresql][binary][null]")
+{
+    test_is_null_binary();
 }
 
 TEST_CASE_METHOD(postgresql_fixture, "test_result_accessors", "[postgresql][result][accessors]")
@@ -355,8 +409,9 @@ TEST_CASE_METHOD(postgresql_fixture, "test_time_without_time_zone", "[postgresql
     // insert
     execute(
         connection,
-        NANODBC_TEXT("insert into test_time_without_tz(t) values "
-                     "('2006-12-30 13:45:12.345'::time with time zone);"));
+        NANODBC_TEXT(
+            "insert into test_time_without_tz(t) values "
+            "('2006-12-30 13:45:12.345'::time with time zone);"));
 
     // select
     {
@@ -378,8 +433,9 @@ TEST_CASE_METHOD(postgresql_fixture, "test_time_with_time_zone", "[postgresql][t
     // insert
     execute(
         connection,
-        NANODBC_TEXT("insert into test_time_with_tz(t) values "
-                     "('2006-12-30 13:45:12.345-08:00'::time with time zone);"));
+        NANODBC_TEXT(
+            "insert into test_time_with_tz(t) values "
+            "('2006-12-30 13:45:12.345-08:00'::time with time zone);"));
 
     // select
     {
@@ -407,8 +463,9 @@ TEST_CASE_METHOD(
     // insert
     execute(
         connection,
-        NANODBC_TEXT("insert into test_timestamp_without_tz(t) values "
-                     "('2006-12-30 13:45:12.345'::timestamp with time zone);"));
+        NANODBC_TEXT(
+            "insert into test_timestamp_without_tz(t) values "
+            "('2006-12-30 13:45:12.345'::timestamp with time zone);"));
 
     // select
     {
@@ -439,8 +496,9 @@ TEST_CASE_METHOD(
     // insert
     execute(
         connection,
-        NANODBC_TEXT("insert into test_timestamp_with_tz(t) values "
-                     "('2006-12-30 13:45:12.345-08:00'::timestamp with time zone);"));
+        NANODBC_TEXT(
+            "insert into test_timestamp_with_tz(t) values "
+            "('2006-12-30 13:45:12.345-08:00'::timestamp with time zone);"));
 
     // select
     {

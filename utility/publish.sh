@@ -1,4 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Publish a new version of nanodbc: bump VERSION.txt, commit it, and push the tag.
+
+set -euo pipefail
 
 usage()
 {
@@ -9,46 +13,61 @@ usage()
     exit 1
 }
 
-if echo "$*" | egrep -q -- "--help|-h"; then
-    usage
-fi
+abort()
+{
+    echo "error: $1" >&2
+    exit 1
+}
 
-pushd "$(git rev-parse --show-toplevel)" >/dev/null
-source utility/shell_control.sh
+case "${1-}" in
+    major | minor | patch) part="$1" ;;
+    *) usage ;;
+esac
 
-if [[ -n "$(git status -s)" ]]; then
+cd "$(git rev-parse --show-toplevel)"
+
+[[ -z "$(git status --porcelain)" ]] ||
     abort "changes exist in workspace, please commit or stash them first."
-fi
 
-version=$(cat VERSION.txt)
-major="$(echo "$version" | cut -d. -f1)"
-minor="$(echo "$version" | cut -d. -f2)"
-patch="$(echo "$version" | cut -d. -f3)"
+IFS=. read -r major minor patch < VERSION.txt
 
-if [[ "$1" == "major" ]]; then
-    major="$(( major + 1 ))"
-    minor="0"
-    patch="0"
-elif [[ "$1" == "minor" ]]; then
-    minor="$(( minor + 1 ))"
-    patch="0"
-elif [[ "$1" == "patch" ]]; then
-    patch="$(( patch + 1 ))"
-else
-    usage
-fi
+case "${part}" in
+    major)
+        major=$((major + 1))
+        minor=0
+        patch=0
+        ;;
+    minor)
+        minor=$((minor + 1))
+        patch=0
+        ;;
+    patch) patch=$((patch + 1)) ;;
+esac
 
-version="$major.$minor.$patch"
-tag="v$version"
+version="${major}.${minor}.${patch}"
+tag="v${version}"
 
-if ! head -n 1 CHANGELOG.md | egrep -q "^# $tag$"; then
-    abort "Please update CHANGELOG.md! The file should start with '# $tag'."
-fi
+head -n3 CHANGELOG.md | tail -n1 | grep -qx "## ${tag}" ||
+    abort "Please update CHANGELOG.md! The top version should be '${tag}'."
 
-show "Publishing nanodbc version: $version"
-set -ue
-run "echo '$version' > VERSION.txt"
-run "git add VERSION.txt"
-run "git commit -m 'Preparing $version release.'"
-run "git tag -f '$tag'"
-run "git push -f origin '$tag'"
+# The release notes are taken from this section by the Release workflow, so a section that
+# is only a heading would publish an empty release.
+./utility/changelog.sh "${tag}" > /dev/null
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+[[ "${branch}" == "main" ]] ||
+    abort "releases are cut from main, but the current branch is '${branch}'."
+
+echo "Publishing nanodbc version: ${version}"
+echo "${version}" > VERSION.txt
+git add VERSION.txt
+git commit -m "Preparing ${version} release."
+git tag "${tag}"
+
+# The branch goes first: a tag whose commit is not on main is reachable from nothing, and
+# the release built from it would document a state of the sources main never had.
+git push origin main
+git push origin "${tag}"
+
+echo "Pushed ${tag}. The Release workflow publishes the release and the documentation:"
+echo "  https://github.com/nanodbc/nanodbc/actions/workflows/release.yml"

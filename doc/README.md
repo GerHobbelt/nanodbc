@@ -45,17 +45,14 @@ rstcheck -r doc
 pushd doc && make clean && make html && popd
 ```
 
-## Deploy
-
-Push content of `doc/build/html` to `gh-pages` branch:
+The Older Versions page lists the versions the website carries, which `conf.py` reads from the `gh-pages` branch. Fetch it first to build that list locally; without it the page says so instead.
 
 ```console
-git clone -b gh-pages https://github.com/nanodbc/nanodbc.git website
-cp -a doc/build/html/* website/
-cp -a doc/build/html/.buildinfo website/
-cp -a doc/build/html/.nojekyl website/
-cd website
-git add -A
-git commit -m "docs: Update build"
-git push origin gh-pages
+git fetch origin gh-pages:refs/remotes/origin/gh-pages
 ```
+
+## Deploy
+
+Nothing to do by hand. Releasing deploys these pages: the [Documentation workflow](../.github/workflows/documentation.yml) commits them to the `gh-pages` branch, at the site root and under `vX.Y.Z/` as a permanent archive of that release. Nothing else writes the branch, so the published site is the documentation of the latest release. See [Publish and Release Process](../README.md#publish-and-release-process).
+
+A pull request builds the pages as a check and attaches them as the `documentation` artifact, so a change can be reviewed as rendered HTML before it is published.

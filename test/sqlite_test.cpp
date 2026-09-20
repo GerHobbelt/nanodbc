@@ -420,9 +420,49 @@ TEST_CASE_METHOD(sqlite_fixture, "test_statement_open_close", "[sqlite][statemen
     test_statement_open_close();
 }
 
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_null_array", "[sqlite][null]")
+{
+    test_bind_null_array();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_bind_null_sentry", "[sqlite][statement]")
 {
     test_bind_null_sentry();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_binary_null_sentry", "[sqlite][binary][null]")
+{
+    test_bind_binary_null_sentry();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_timeouts", "[sqlite][statement]")
+{
+    test_timeouts();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_statement_parameter_description", "[sqlite][statement]")
+{
+    test_statement_parameter_description();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_result_rowset_navigation", "[sqlite][result][rowset]")
+{
+    test_result_rowset_navigation();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_execute_direct_batch_ops", "[sqlite][statement][batch]")
+{
+    test_execute_direct_batch_ops();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_result_unbind", "[sqlite][result][unbind]")
+{
+    test_result_unbind();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_is_null_binary", "[sqlite][binary][null]")
+{
+    test_is_null_binary();
 }
 
 TEST_CASE_METHOD(sqlite_fixture, "test_result_accessors", "[sqlite][result][accessors]")

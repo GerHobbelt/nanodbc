@@ -31,6 +31,15 @@ public:
     /// \brief Move assignment operator.
     variant_row_cached_result& operator=(variant_row_cached_result&& rhs) noexcept;
 
+    /// \brief The cached row is not shared, so a copy is refused rather than made.
+    /// Declaring the move operations already withdrew these; saying so states the whole
+    /// set rather than half of it.
+    variant_row_cached_result(variant_row_cached_result const&) = delete;
+    variant_row_cached_result& operator=(variant_row_cached_result const&) = delete;
+
+    /// \brief Destructor.
+    ~variant_row_cached_result() = default;
+
     /// Member swap.
     void swap(variant_row_cached_result& rhs) noexcept;
 
@@ -48,12 +57,15 @@ public:
     /// \brief Access to underlying result
     ///
     /// For example, in order to access to columns metadata.
-    nanodbc::result& result() { return static_cast<nanodbc::result&>(*this); }
+    nanodbc::result& result() noexcept { return static_cast<nanodbc::result&>(*this); }
 
     /// \brief Access to underlying result
     ///
     /// For example, in order to access to columns metadata.
-    nanodbc::result const& result() const { return static_cast<nanodbc::result const&>(*this); }
+    nanodbc::result const& result() const noexcept
+    {
+        return static_cast<nanodbc::result const&>(*this);
+    }
 
 private:
     /// \brief Clears cache of row values as result::next pre-condition.

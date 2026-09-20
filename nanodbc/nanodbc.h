@@ -389,13 +389,13 @@ struct batch_ops
     /// \brief Creates lengths of -1, meaning neither has been chosen.
     batch_ops() noexcept
         : parameter_array_length(-1L)
-        , rowset_size(-1L){};
+        , rowset_size(-1L) {};
 
     /// \brief Creates both lengths with the same value.
     /// \param all_length Value used for the parameter array length and the rowset size.
     batch_ops(const long all_length) noexcept
         : parameter_array_length(all_length)
-        , rowset_size(all_length){};
+        , rowset_size(all_length) {};
 };
 
 /// \brief A type for representing date data.
@@ -493,7 +493,7 @@ public:
     attribute(long const& attribute, long const& string_length, std::uintptr_t value_ptr) noexcept
         : attribute_(attribute)
         , string_length_(string_length)
-        , value_ptr_((void*)value_ptr){};
+        , value_ptr_((void*)value_ptr) {};
 
 protected:
     long attribute_;     ///< The Attribute argument of the ODBC call.
@@ -562,13 +562,13 @@ public:
     explicit transaction(const class connection& conn);
 
     /// Copy constructor.
-    transaction(const transaction& rhs);
+    transaction(const transaction& rhs) noexcept;
 
     /// Move constructor.
     transaction(transaction&& rhs) noexcept;
 
     /// Assignment.
-    transaction& operator=(transaction rhs);
+    transaction& operator=(transaction rhs) noexcept;
 
     /// Member swap.
     void swap(transaction& rhs) noexcept;
@@ -624,7 +624,7 @@ public:
     table_valued_parameter();
 
     /// \brief Copy constructor.
-    table_valued_parameter(const table_valued_parameter& rhs);
+    table_valued_parameter(const table_valued_parameter& rhs) noexcept;
 
     /// \brief Move constructor.
     table_valued_parameter(table_valued_parameter&& rhs) noexcept;
@@ -885,12 +885,12 @@ public:
     {
     public:
         attribute(attribute const& other) noexcept
-            : nanodbc::attribute(other){};
+            : nanodbc::attribute(other) {};
         attribute(
             long const& attribute,
             long const& string_length,
             variant const& resource) noexcept
-            : nanodbc::attribute(attribute, string_length, resource){};
+            : nanodbc::attribute(attribute, string_length, resource) {};
 
     private:
         friend class nanodbc::statement::statement_impl;
@@ -904,7 +904,7 @@ private:
             long const& attribute,
             long const& string_length,
             std::uintptr_t value_ptr) noexcept
-            : nanodbc::attribute(attribute, string_length, value_ptr){};
+            : nanodbc::attribute(attribute, string_length, value_ptr) {};
 
     private:
         friend class nanodbc::statement::statement_impl;
@@ -947,13 +947,13 @@ public:
     statement(class connection& conn, string const& query, long timeout = 0);
 
     /// \brief Copy constructor.
-    statement(const statement& rhs);
+    statement(const statement& rhs) noexcept;
 
     /// \brief Move constructor.
     statement(statement&& rhs) noexcept;
 
     /// \brief Assignment.
-    statement& operator=(statement rhs);
+    statement& operator=(statement rhs) noexcept;
 
     /// \brief Member swap.
     void swap(statement& rhs) noexcept;
@@ -980,7 +980,7 @@ public:
     const class connection& connection() const;
 
     /// \brief Returns the native ODBC statement handle.
-    void* native_statement_handle() const;
+    void* native_statement_handle() const noexcept;
 
     /// \brief Closes the statement and frees all associated resources.
     void close();
@@ -1535,12 +1535,12 @@ public:
     {
     public:
         attribute(attribute const& other) noexcept
-            : nanodbc::attribute(other){};
+            : nanodbc::attribute(other) {};
         attribute(
             long const& attribute,
             long const& string_length,
             variant const& resource) noexcept
-            : nanodbc::attribute(attribute, string_length, resource){};
+            : nanodbc::attribute(attribute, string_length, resource) {};
 
     private:
         friend class nanodbc::connection::connection_impl;
@@ -1554,7 +1554,7 @@ private:
             long const& attribute,
             long const& string_length,
             std::uintptr_t value_ptr) noexcept
-            : nanodbc::attribute(attribute, string_length, value_ptr){};
+            : nanodbc::attribute(attribute, string_length, value_ptr) {};
 
     private:
         friend class nanodbc::connection::connection_impl;
@@ -1565,13 +1565,13 @@ public:
     connection();
 
     /// Copy constructor.
-    connection(const connection& rhs);
+    connection(const connection& rhs) noexcept;
 
     /// Move constructor.
     connection(connection&& rhs) noexcept;
 
     /// Assignment.
-    connection& operator=(connection rhs);
+    connection& operator=(connection rhs) noexcept;
 
     /// Member swap.
     void swap(connection&) noexcept;
@@ -1748,10 +1748,10 @@ public:
     std::size_t transactions() const;
 
     /// \brief Returns the native ODBC database connection handle.
-    void* native_dbc_handle() const;
+    void* native_dbc_handle() const noexcept;
 
     /// \brief Returns the native ODBC environment handle.
-    void* native_env_handle() const;
+    void* native_env_handle() const noexcept;
 
     /// \brief Returns information from the ODBC connection as a string or fixed-size value.
     /// The general information about the driver and data source associated
@@ -1788,8 +1788,8 @@ public:
 private:
     std::size_t ref_transaction();
     std::size_t unref_transaction();
-    bool rollback() const;
-    void rollback(bool onoff);
+    bool rollback() const noexcept;
+    void rollback(bool onoff) noexcept;
 
 private:
     std::shared_ptr<connection_impl> impl_;
@@ -1818,25 +1818,25 @@ class result
 {
 public:
     /// \brief Empty result set.
-    result();
+    result() noexcept;
 
     /// \brief Free result set.
     ~result() noexcept;
 
     /// \brief Copy constructor.
-    result(const result& rhs);
+    result(const result& rhs) noexcept;
 
     /// \brief Move constructor.
     result(result&& rhs) noexcept;
 
     /// \brief Assignment.
-    result& operator=(result rhs);
+    result& operator=(result rhs) noexcept;
 
     /// \brief Member swap.
     void swap(result& rhs) noexcept;
 
     /// \brief Returns the native ODBC statement handle.
-    void* native_statement_handle() const;
+    void* native_statement_handle() const noexcept;
 
     /// \brief The rowset size for this result set.
     long rowset_size() const noexcept;
@@ -2061,11 +2061,19 @@ public:
 
     /// \brief Returns true if and only if the given column of the current rowset is null.
     ///
-    /// There is a bug/limitation in ODBC drivers for SQL Server (and possibly others)
-    /// which causes SQLBindCol() to never write SQL_NOT_NULL to the length/indicator
-    /// buffer unless you also bind the data column. nanodbc's is_null() will return
-    /// correct values for (n)varchar(max) columns when you ensure that SQLGetData()
-    /// has been called for that column (i.e. after get() or get_ref() is called).
+    /// A long column is not bound to a buffer, and most drivers leave its length/indicator
+    /// unwritten at fetch even where the ODBC specification says binding the indicator
+    /// alone is enough. A binary one is asked of the driver instead, which costs a call to
+    /// SQLGetData asking for none of the data: the value is left where it is, so a get() or
+    /// get_ref() afterwards still returns the whole of it, but it counts as visiting the
+    /// column, and SQL Server requires unbound columns be visited in ascending order and
+    /// refuses an earlier one afterwards with SQLSTATE 07009. Ask in the order you intend
+    /// to read.
+    ///
+    /// A character or fixed size column cannot be asked without spending the only read
+    /// there is, so for those this reports whatever the fetch knew until a get() or
+    /// get_ref() settles it. Where the driver declines to answer at all, the same applies
+    /// rather than raising.
     ///
     /// Columns are numbered from left to right and 0-indexed.
     /// \see get(), get_ref()
@@ -2187,7 +2195,7 @@ public:
     bool next_result();
 
     /// \brief If and only if result object is valid, returns true.
-    explicit operator bool() const;
+    explicit operator bool() const noexcept;
 
 private:
     result(statement statement, long rowset_size);
@@ -2225,7 +2233,7 @@ public:
     }
 
     /// Dereference.
-    reference operator*() { return result_; }
+    reference operator*() noexcept { return result_; }
 
     /// Access through dereference.
     pointer operator->()
@@ -2286,7 +2294,7 @@ inline result_iterator begin(result& r)
 /// When a valid `nanodbc::result_iterator` reaches the end of the underlying result set,
 /// it becomes equal to the end-of-result iterator.
 /// Dereferencing or incrementing it further is undefined.
-inline result_iterator end(result& /*r*/)
+inline result_iterator end(result& /*r*/) noexcept
 {
     return {};
 }
