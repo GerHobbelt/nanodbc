@@ -23,7 +23,7 @@
 ///     - \ref bind_strings
 ///
 /// \section license License
-/// <div class="license">
+/// <pre class="license">
 /// Copyright (C) lexicalunit <lexicalunit@lexicalunit.com>
 /// Copyright (C) Mateusz Loskot <mateusz@loskot.net>
 ///
@@ -46,10 +46,10 @@
 /// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 /// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 /// THE SOFTWARE.
-/// </div>
+/// </pre>
 ///
 /// \section credits Credits
-/// <div class="license">
+/// <pre class="license">
 /// Much of the code in this file was originally derived from TinyODBC.
 /// TinyODBC is hosted at http://code.google.com/p/tiodbc/
 /// Copyright (C) SqUe squarious@gmail.com
@@ -72,7 +72,7 @@
 /// Copyright (C) Nick E. Geht
 /// License: Perpetual license to reproduce, distribute, adapt, perform, display, and sublicense.
 /// See http://www.codeguru.com/submission-guidelines.php for details.
-/// </div>
+/// </pre>
 
 #ifndef NANODBC_NANODBC_H
 #define NANODBC_NANODBC_H
@@ -1136,7 +1136,6 @@ public:
     /// \param batch_operations Rows to fetch per rowset, or number of batch parameters to process.
     /// \param timeout Seconds before query timeout. Default is 0 indicating no timeout.
     /// \throws database_error
-    /// \return A result set object.
     /// \attention You will want to use transactions if you are doing batch operations because it
     ///            will prevent auto commits after each individual operation is executed.
     /// \see open(), prepare(), execute(), execute_direct(), result, transaction
@@ -1156,11 +1155,26 @@ public:
     /// \see open(), prepare(), result, transaction
     class result execute(long batch_operations = 1, long timeout = 0);
 
+    /// \brief Execute the previously prepared query now, sizing the parameter array and
+    ///        the rowset separately.
+    ///
+    /// The number of parameter sets to execute and the number of rows to fetch at a time
+    /// are unrelated: a query taking one set of parameters may still want its rows in
+    /// large blocks. The single argument overload sets both alike, which asks the driver
+    /// to read as many parameter sets as it was told to fetch rows.
+    ///
+    /// \param array_sizes Parameter array length and rowset size. A length of zero or less
+    ///                    leaves that one at 1.
+    /// \param timeout The number in seconds before query timeout. Default 0 meaning no timeout.
+    /// \throws database_error
+    /// \return A result set object.
+    /// \see open(), prepare(), result, transaction, batch_ops
+    class result execute(batch_ops const& array_sizes, long timeout = 0);
+
     /// \brief Execute the previously prepared query now without constructing result object.
     /// \param batch_operations Rows to fetch per rowset, or number of batch parameters to process.
     /// \param timeout The number in seconds before query timeout. Default 0 meaning no timeout.
     /// \throws database_error
-    /// \return A result set object.
     /// \attention You will want to use transactions if you are doing batch operations because it
     ///            will prevent auto commits after each individual operation is executed.
     /// \see open(), prepare(), execute(), result, transaction
@@ -2809,7 +2823,6 @@ result execute(connection& conn, string const& query, long batch_operations = 1,
 /// \param query The SQL query that will be executed.
 /// \param batch_operations Rows to fetch per rowset, or number of batch parameters to process.
 /// \param timeout The number in seconds before query timeout. Default is 0 indicating no timeout.
-/// \return A result set object.
 /// \attention You will want to use transactions if you are doing batch operations because it will
 ///            prevent auto commits from occurring after each individual operation is executed.
 /// \see open(), prepare(), execute(), result, transaction
@@ -2833,7 +2846,6 @@ result execute(statement& stmt, long batch_operations = 1);
 /// \param stmt The prepared statement that will be executed.
 /// \param batch_operations Rows to fetch per rowset, or the number of batch parameters to process.
 /// \throws database_error
-/// \return A result set object.
 /// \attention You will want to use transactions if you are doing batch operations because it will
 ///            prevent auto commits from occurring after each individual operation is executed.
 /// \see open(), prepare(), execute(), result
@@ -2855,7 +2867,6 @@ result transact(statement& stmt, long batch_operations);
 /// \param stmt The prepared statement that will be executed in batch.
 /// \param batch_operations Rows to fetch per rowset, or the number of batch parameters to process.
 /// \throws database_error
-/// \return A result set object.
 /// \see open(), prepare(), execute(), result, transaction
 void just_transact(statement& stmt, long batch_operations);
 

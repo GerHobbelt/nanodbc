@@ -53,9 +53,30 @@ TEST_CASE_METHOD(postgresql_fixture, "test_datasources", "[postgresql][datasourc
     test_datasources();
 }
 
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_bind_timestamp_as_string",
+    "[postgresql][statement][bind][timestamp]")
+{
+    test_bind_timestamp_as_string();
+}
+
 TEST_CASE_METHOD(postgresql_fixture, "test_batch_insert_integer", "[postgresql][batch][integral]")
 {
     test_batch_insert_integral();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_rowset_size_apart_from_parameter_sets",
+    "[postgresql][result][rowset]")
+{
+    test_rowset_size_apart_from_parameter_sets();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_batch_delete", "[postgresql][batch][delete]")
+{
+    test_batch_delete();
 }
 
 TEST_CASE_METHOD(postgresql_fixture, "test_batch_insert_null", "[postgresql][batch][null]")
@@ -361,6 +382,14 @@ TEST_CASE_METHOD(
     "[postgresql][transaction][rollback]")
 {
     test_nested_transaction_rollback();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_long_text_chunk_boundaries",
+    "[postgresql][result][string]")
+{
+    test_long_text_chunk_boundaries();
 }
 
 TEST_CASE_METHOD(postgresql_fixture, "test_result_unbind", "[postgresql][result][unbind]")

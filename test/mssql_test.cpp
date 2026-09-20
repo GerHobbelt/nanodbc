@@ -221,6 +221,19 @@ TEST_CASE_METHOD(mssql_fixture, "test_batch_insert_integral", "[mssql][batch][in
     test_batch_insert_integral();
 }
 
+TEST_CASE_METHOD(
+    mssql_fixture,
+    "test_rowset_size_apart_from_parameter_sets",
+    "[mssql][result][rowset]")
+{
+    test_rowset_size_apart_from_parameter_sets();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_batch_delete", "[mssql][batch][delete]")
+{
+    test_batch_delete();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_batch_insert_null", "[mssql][batch][null]")
 {
     test_batch_insert_null();
@@ -281,6 +294,47 @@ TEST_CASE_METHOD(mssql_fixture, "test_multi_statement_insert_select", "[mssql]")
     auto const sid = r.get<std::string>(0);
     auto const nid = std::stoll(sid);
     REQUIRE(nid == 1);
+}
+
+// The OUTPUT clause returns the generated key from the INSERT itself, as one result set
+// with rows, rather than as a second statement whose count has to be stepped over first.
+TEST_CASE_METHOD(mssql_fixture, "test_insert_output_identity", "[mssql][result][identity]")
+{
+    auto connection = connect();
+    create_table(
+        connection,
+        NANODBC_TEXT("test_insert_output_identity"),
+        NANODBC_TEXT("(id int IDENTITY(1,1) PRIMARY KEY, data varchar(20) NOT NULL)"));
+
+    auto const insert = NANODBC_TEXT(
+        "insert into test_insert_output_identity (data) "
+        "output inserted.id values (?);");
+
+    for (int expected = 1; expected <= 3; ++expected)
+    {
+        nanodbc::statement statement(connection);
+        statement.prepare(insert);
+        statement.bind(0, "abc");
+
+        auto results = statement.execute();
+        REQUIRE(results.columns() == 1);
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == expected);
+        REQUIRE(!results.next());
+    }
+
+    auto rows =
+        execute(connection, NANODBC_TEXT("select count(*) from test_insert_output_identity;"));
+    REQUIRE(rows.next());
+    REQUIRE(rows.get<int>(0) == 3);
+}
+
+TEST_CASE_METHOD(
+    mssql_fixture,
+    "test_bind_timestamp_as_string",
+    "[mssql][statement][bind][timestamp]")
+{
+    test_bind_timestamp_as_string();
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_blob", "[mssql][blob][binary][varbinary]")
@@ -1203,6 +1257,11 @@ TEST_CASE_METHOD(
     test_nested_transaction_rollback();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_long_text_chunk_boundaries", "[mssql][result][string]")
+{
+    test_long_text_chunk_boundaries();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_result_unbind", "[mssql][result][unbind]")
 {
     test_result_unbind();
@@ -1631,6 +1690,42 @@ TEST_CASE_METHOD(mssql_fixture, "test_timestamp", "[mssql][rowversion][timestamp
     }
 }
 
+// The isolation level belongs to the session, so setting it with a statement holds for
+// the statements after it, and for a transaction opened later.
+TEST_CASE_METHOD(mssql_fixture, "test_transaction_isolation_level_persists", "[mssql][transaction]")
+{
+    auto connection = connect();
+
+    auto const level = [&]()
+    {
+        auto results = execute(
+            connection,
+            NANODBC_TEXT(
+                "select transaction_isolation_level from sys.dm_exec_sessions "
+                "where session_id = @@SPID;"));
+        REQUIRE(results.next());
+        return results.get<int>(0);
+    };
+
+    int const read_uncommitted = 1;
+    int const serializable = 4;
+
+    execute(connection, NANODBC_TEXT("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;"));
+    REQUIRE(level() == read_uncommitted);
+    // Each call above runs its own statement, so the level outlasts the one that set it.
+    REQUIRE(level() == read_uncommitted);
+
+    execute(connection, NANODBC_TEXT("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;"));
+    REQUIRE(level() == serializable);
+
+    {
+        nanodbc::transaction transaction(connection);
+        REQUIRE(level() == serializable);
+        transaction.commit();
+    }
+    REQUIRE(level() == serializable);
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_transaction", "[mssql][transaction]")
 {
     test_transaction();
@@ -1738,6 +1833,56 @@ TEST_CASE_METHOD(mssql_fixture, "test_async", "[mssql][async]")
 }
 #endif
 
+// A timestamp's fraction counts nanoseconds, while datetime2(7) resolves a hundred of
+// them, so the fraction bound has to be a multiple of 100. Asking for finer than the
+// column carries is refused rather than rounded.
+TEST_CASE_METHOD(mssql_fixture, "test_bind_timestamp_fraction", "[mssql][bind][timestamp]")
+{
+    auto connection = connect();
+    create_table(
+        connection,
+        NANODBC_TEXT("test_bind_timestamp_fraction"),
+        NANODBC_TEXT("(id int, t datetime2(7))"));
+
+    auto const bind_fraction = [&](std::int32_t fraction)
+    {
+        execute(connection, NANODBC_TEXT("delete from test_bind_timestamp_fraction;"));
+
+        nanodbc::timestamp stamp{};
+        stamp.year = 2020;
+        stamp.month = 9;
+        stamp.day = 3;
+        stamp.hour = 15;
+        stamp.min = 27;
+        stamp.sec = 38;
+        stamp.fract = fraction;
+
+        nanodbc::statement statement(connection);
+        statement.prepare(
+            NANODBC_TEXT("insert into test_bind_timestamp_fraction (id, t) values (1, ?);"));
+        statement.bind(0, &stamp);
+        statement.just_execute();
+    };
+
+    auto const stored_fraction = [&]()
+    {
+        auto results =
+            execute(connection, NANODBC_TEXT("select t from test_bind_timestamp_fraction;"));
+        REQUIRE(results.next());
+        return results.get<nanodbc::timestamp>(0).fract;
+    };
+
+    for (std::int32_t const fraction : {0, 100, 1000000, 123456700, 999999900})
+    {
+        bind_fraction(fraction);
+        REQUIRE(stored_fraction() == fraction);
+    }
+
+    // Finer than a hundred nanoseconds is more than the column holds.
+    REQUIRE_THROWS_AS(bind_fraction(1), nanodbc::database_error);
+    REQUIRE_THROWS_AS(bind_fraction(9999999), nanodbc::database_error);
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_bind_float", "[mssql][number][float]")
 {
     auto conn = connect();
@@ -1763,16 +1908,24 @@ TEST_CASE_METHOD(mssql_fixture, "test_bind_float", "[mssql][number][float]")
         auto result =
             nanodbc::execute(conn, NANODBC_TEXT("select r,f,f24,f53,d from test_bind_float"));
         result.next();
+        // Read as text and read back as a number, each column names the value it holds.
+        // Comparing numbers rather than characters leaves how many digits were written
+        // out of it. Slicing the text instead truncates rather than rounds, which is how
+        // 3.1229999065399170 reads as 3.122 while being 3.123 to every digit a float
+        // carries.
+        auto const names_the_same_value = [](std::string const& text, double value)
+        { return Catch::Matchers::WithinRel(value, 1e-6).match(std::stod(text)); };
+
         REQUIRE(result.get<float>(0) == static_cast<float>(r));
-        REQUIRE(result.get<std::string>(0).substr(0, 5) == "1.123");
+        REQUIRE(names_the_same_value(result.get<std::string>(0), result.get<double>(0)));
         REQUIRE(result.get<float>(1) == static_cast<float>(f));
-        REQUIRE(result.get<std::string>(1).substr(0, 5) == "3.123");
+        REQUIRE(names_the_same_value(result.get<std::string>(1), result.get<double>(1)));
         REQUIRE(result.get<float>(2) == static_cast<float>(f));
-        REQUIRE(result.get<std::string>(2).substr(0, 5) == "3.123");
+        REQUIRE(names_the_same_value(result.get<std::string>(2), result.get<double>(2)));
         REQUIRE(result.get<float>(3) == static_cast<float>(f));
-        REQUIRE(result.get<std::string>(3).substr(0, 5) == "3.123");
+        REQUIRE(names_the_same_value(result.get<std::string>(3), result.get<double>(3)));
         REQUIRE(result.get<double>(4) == static_cast<double>(d));
-        REQUIRE(result.get<std::string>(4).substr(0, 5) == "7.123");
+        REQUIRE(names_the_same_value(result.get<std::string>(4), result.get<double>(4)));
     }
 }
 
@@ -2532,6 +2685,40 @@ TEST_CASE_METHOD(mssql_fixture, "test_output_parameters", "[mssql][statement][bi
     REQUIRE(out2 == 2);
 }
 
+// An output parameter of a string type is bound with bind_strings and a direction. The
+// buffer belongs to the caller and the driver writes the value into it, so it has to be
+// writable and large enough for whatever the procedure returns.
+TEST_CASE_METHOD(mssql_fixture, "test_output_string_parameter", "[mssql][statement][bind]")
+{
+    auto connection = connect();
+    nanodbc::string const name = NANODBC_TEXT("test_output_string_parameter_proc");
+    try
+    {
+        execute(connection, NANODBC_TEXT("DROP PROCEDURE ") + name);
+    }
+    catch (...)
+    {
+    }
+    execute(
+        connection,
+        NANODBC_TEXT("CREATE PROCEDURE ") + name +
+            NANODBC_TEXT(
+                " @in varchar(20), @out varchar(50) OUTPUT AS "
+                "BEGIN SET @out = 'hello ' + @in; END;"));
+
+    nanodbc::statement statement(connection);
+    statement.prepare(NANODBC_TEXT("{ call ") + name + NANODBC_TEXT("(?, ?) }"));
+
+    char in[21] = "world";
+    char out[51] = {};
+
+    statement.bind_strings(0, in, sizeof(in), 1);
+    statement.bind_strings(1, out, sizeof(out), 1, nanodbc::statement::PARAM_OUT);
+    statement.just_execute();
+
+    REQUIRE(std::string(out) == "hello world");
+}
+
 // A procedure's RETURN value is not an output parameter; it is bound at position zero
 // of a "{ ? = CALL ... }" escape sequence with PARAM_RETURN.
 TEST_CASE_METHOD(mssql_fixture, "test_procedure_return_value", "[mssql][statement][bind]")
@@ -2560,6 +2747,55 @@ TEST_CASE_METHOD(mssql_fixture, "test_procedure_return_value", "[mssql][statemen
     statement.just_execute();
 
     REQUIRE(rv == 42);
+}
+
+// SQLDescribeParam reports a driver limit rather than the column's real capacity for a
+// MAX column, so a value larger than the limit has to be bound as unlimited or the driver
+// refuses it with 22001.
+TEST_CASE_METHOD(mssql_fixture, "test_large_object_parameters", "[mssql][statement][bind]")
+{
+    auto connection = connect();
+    create_table(
+        connection,
+        NANODBC_TEXT("test_large_object_parameters"),
+        NANODBC_TEXT("(id int, b varbinary(max), s varchar(max))"));
+
+    // Past the 8000 bytes SQL Server allows a non-MAX parameter.
+    for (std::size_t const size : {std::size_t{4000}, std::size_t{9000}, std::size_t{100000}})
+    {
+        execute(connection, NANODBC_TEXT("delete from test_large_object_parameters;"));
+
+        std::vector<std::vector<std::uint8_t>> rows{std::vector<std::uint8_t>(size, 0x41)};
+        nanodbc::statement statement(connection);
+        statement.prepare(
+            NANODBC_TEXT("insert into test_large_object_parameters (id, b) values (1, ?);"));
+        statement.bind(0, rows);
+        statement.just_execute();
+
+        auto results = execute(
+            connection,
+            NANODBC_TEXT("select datalength(b) from test_large_object_parameters where id = 1;"));
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == static_cast<int>(size));
+    }
+
+    for (std::size_t const size : {std::size_t{9000}, std::size_t{100000}})
+    {
+        execute(connection, NANODBC_TEXT("delete from test_large_object_parameters;"));
+
+        std::string const value(size, 'x');
+        nanodbc::statement statement(connection);
+        statement.prepare(
+            NANODBC_TEXT("insert into test_large_object_parameters (id, s) values (2, ?);"));
+        statement.bind(0, value.c_str());
+        statement.just_execute();
+
+        auto results = execute(
+            connection,
+            NANODBC_TEXT("select datalength(s) from test_large_object_parameters where id = 2;"));
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == static_cast<int>(size));
+    }
 }
 
 // A character outside the basic multilingual plane is a surrogate pair in UTF-16, so
@@ -2613,6 +2849,44 @@ TEST_CASE_METHOD(mssql_fixture, "test_non_bmp_round_trip", "[mssql][unicode][bin
 #else
     REQUIRE(!read_back.empty());
 #endif
+}
+
+// A batch of statements returns a result set for each, and the counts from INSERT come
+// before the rows from SELECT. Reading the batch as though it returned only the rows
+// reaches for a result set that has none.
+TEST_CASE_METHOD(mssql_fixture, "test_batch_with_table_variable", "[mssql][result][batch]")
+{
+    auto connection = connect();
+    nanodbc::string const batch = NANODBC_TEXT(
+        "declare @t table (id int, name varchar(20)); "
+        "insert into @t values (1, 'one'), (2, 'two'); "
+        "select id, name from @t;");
+
+    // The insert's count arrives first, with no columns to read.
+    {
+        auto results = execute(connection, batch);
+        REQUIRE(results.columns() == 0);
+        REQUIRE_THROWS_AS(results.next(), nanodbc::database_error);
+
+        REQUIRE(results.next_result());
+        REQUIRE(results.columns() == 2);
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == 1);
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == 2);
+        REQUIRE(!results.next());
+    }
+
+    // SET NOCOUNT ON withholds the counts, leaving the rows as the only result set.
+    {
+        auto results = execute(connection, NANODBC_TEXT("set nocount on; ") + batch);
+        REQUIRE(results.columns() == 2);
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == 1);
+        REQUIRE(results.get<nanodbc::string>(1) == NANODBC_TEXT("one"));
+        REQUIRE(results.next());
+        REQUIRE(!results.next());
+    }
 }
 
 // An NVARCHAR column is bound wide, so reading one as a character takes the wide arm of

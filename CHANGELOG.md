@@ -2,7 +2,25 @@
 
 ## Unreleased
 
+- A date or time parameter bound as text is declared as the driver describes it, Oracle refusing the ODBC literal form when it is declared as text. [`#248`](https://github.com/nanodbc/nanodbc/issues/248)
+- `statement::execute` takes a `batch_ops`, so the rowset size and the parameter array length can differ. [`#162`](https://github.com/nanodbc/nanodbc/issues/162)
+- Documented that how far a batch of parameters carries is the driver's to decide, with measurements. [`#241`](https://github.com/nanodbc/nanodbc/issues/241)
+
+## v2.18.0
+
+- The API reference is a Doxygen site themed with doxygen-awesome-css, with search and a navigation tree. [`#373`](https://github.com/nanodbc/nanodbc/issues/373)
+- Five functions returning nothing documented a return value, which Doxygen reported and Breathe did not.
+- A test covers a batch delete whose first parameter set matches nothing, which the drivers count differently and carry out alike. [`#168`](https://github.com/nanodbc/nanodbc/issues/168)
+- A test covers the transaction isolation level set by a statement holding for the session, as it is the session's to hold. [`#10`](https://github.com/nanodbc/nanodbc/issues/10)
+- A floating point column read as text carries every digit needed to read back as the same value, where six decimals were rendered whatever the magnitude. [`#196`](https://github.com/nanodbc/nanodbc/issues/196)
+- A test covers binding a timestamp's fractional second, which counts nanoseconds and has to suit what the column resolves. [`#4`](https://github.com/nanodbc/nanodbc/issues/4)
+- A date or time parameter bound as text is declared as text, so the server reads it rather than the driver, which reads fewer spellings. [`#248`](https://github.com/nanodbc/nanodbc/issues/248)
+- A test covers reading a generated identity back from an INSERT through the OUTPUT clause. [`#193`](https://github.com/nanodbc/nanodbc/issues/193)
+- Documented that a batch returns a result set per statement, counts included, and how to reach the rows. [`#247`](https://github.com/nanodbc/nanodbc/issues/247)
+- A test covers binding a string as an output parameter, which the driver writes back into the caller's buffer. [`#231`](https://github.com/nanodbc/nanodbc/issues/231)
+- A test reads long text at the sizes either side of the chunk the driver is asked for, where a piece could be dropped or repeated. [`#22`](https://github.com/nanodbc/nanodbc/issues/22)
 - `transaction::commit()` honours the connection's rollback flag, so an inner rollback is no longer discarded by an outer commit. [`#78`](https://github.com/nanodbc/nanodbc/issues/78)
+- A regression test covers binding objects past the driver's reported parameter limit, which nothing pinned. [`#5`](https://github.com/nanodbc/nanodbc/issues/5)
 - A bound character column the driver under-sized is read again in full instead of coming back truncated. [`#343`](https://github.com/nanodbc/nanodbc/issues/343)
 - Tests cover executing a prepared statement repeatedly and binding a batch with an arithmetic null sentry. [`#56`](https://github.com/nanodbc/nanodbc/issues/56) [`#77`](https://github.com/nanodbc/nanodbc/issues/77)
 - Column buffer casts go through `void*` rather than `reinterpret_cast` and a C-style cast, which analysers report as unsafe. [`#420`](https://github.com/nanodbc/nanodbc/issues/420)

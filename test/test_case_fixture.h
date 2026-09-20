@@ -151,6 +151,78 @@ struct test_case_fixture : public base_test_fixture
         }
     }
 #endif
+    // How many parameter sets a statement executes and how many rows it fetches at a time
+    // are unrelated. A query taking one set of parameters may still want its rows in large
+    // blocks, which asking for both with one number cannot express.
+    void test_rowset_size_apart_from_parameter_sets()
+    {
+        auto connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_rowset_size_apart_from_parameter_sets"),
+            NANODBC_TEXT("(i int)"));
+        for (int i = 0; i < 20; ++i)
+        {
+            execute(
+                connection,
+                NANODBC_TEXT(
+                    "insert into test_rowset_size_apart_from_parameter_sets (i) "
+                    "values (") +
+                    nanodbc::string(1, static_cast<nanodbc::string::value_type>('0' + i / 10)) +
+                    nanodbc::string(1, static_cast<nanodbc::string::value_type>('0' + i % 10)) +
+                    NANODBC_TEXT(");"));
+        }
+
+        int const threshold = 5;
+        nanodbc::statement statement(connection);
+        statement.prepare(NANODBC_TEXT(
+            "select i from test_rowset_size_apart_from_parameter_sets "
+            "where i >= ? order by i;"));
+        statement.bind(0, &threshold);
+
+        nanodbc::batch_ops array_sizes;
+        array_sizes.parameter_array_length = 1;
+        array_sizes.rowset_size = 10;
+
+        auto results = statement.execute(array_sizes);
+        REQUIRE(results.rowset_size() == 10);
+
+        int rows = 0;
+        while (results.next())
+            ++rows;
+        REQUIRE(rows == 15);
+    }
+
+    // A batch runs the statement once per parameter set, so the sets that match nothing
+    // are not errors and the ones that match are still carried out.
+    void test_batch_delete()
+    {
+        auto connection = connect();
+        create_table(connection, NANODBC_TEXT("test_batch_delete"), NANODBC_TEXT("(i int)"));
+        execute(
+            connection, NANODBC_TEXT("insert into test_batch_delete (i) values (1), (2), (3);"));
+
+        // The first set matches nothing, so a driver reporting only the first set's count
+        // reports zero for a batch that went on to delete two rows. How many rows
+        // affected_rows() answers with for a batch is the driver's to decide, and the
+        // drivers here disagree; what the batch did to the table is not.
+        int const keys[] = {40, 1, 2};
+        std::size_t const batch = 3;
+
+        nanodbc::statement statement(connection);
+        statement.prepare(NANODBC_TEXT("delete from test_batch_delete where i = ?;"));
+        statement.bind(0, keys, batch);
+        execute(statement, static_cast<long>(batch));
+
+        auto results = execute(connection, NANODBC_TEXT("select count(*) from test_batch_delete;"));
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == 1);
+
+        auto remaining = execute(connection, NANODBC_TEXT("select i from test_batch_delete;"));
+        REQUIRE(remaining.next());
+        REQUIRE(remaining.get<int>(0) == 3);
+    }
+
     void test_batch_insert_mixed()
     {
         std::size_t const batch_size = 9;
@@ -1529,6 +1601,37 @@ struct test_case_fixture : public base_test_fixture
         REQUIRE(rows == 4);
     }
 
+    // A timestamp in the form ODBC spells its literals, "yyyy-mm-dd hh:mm:ss", bound as
+    // a string and read back field by field.
+    void test_bind_timestamp_as_string()
+    {
+        auto connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_bind_timestamp_as_string"),
+            NANODBC_TEXT("(id int, ts ") + get_timestamp_type_name() + NANODBC_TEXT(")"));
+
+        auto const value = NANODBC_TEXT("2020-09-03 15:27:38");
+
+        nanodbc::statement statement(connection);
+        statement.prepare(
+            NANODBC_TEXT("insert into test_bind_timestamp_as_string (id, ts) values (1, ?);"));
+        statement.bind(0, value);
+        statement.just_execute();
+
+        auto results =
+            execute(connection, NANODBC_TEXT("select ts from test_bind_timestamp_as_string;"));
+        REQUIRE(results.next());
+
+        auto const stamp = results.template get<nanodbc::timestamp>(0);
+        REQUIRE(stamp.year == 2020);
+        REQUIRE(stamp.month == 9);
+        REQUIRE(stamp.day == 3);
+        REQUIRE(stamp.hour == 15);
+        REQUIRE(stamp.min == 27);
+        REQUIRE(stamp.sec == 38);
+    }
+
     // Unbinding releases the buffer a column was read into, after which it is read one
     // value at a time instead.
     void test_result_unbind()
@@ -1732,6 +1835,51 @@ struct test_case_fixture : public base_test_fixture
             outer.commit();
         }
         REQUIRE(count() == 1);
+    }
+
+    // A long column is read in fixed-size pieces with repeated SQLGetData calls, 1024
+    // bytes at a time narrow and 512 characters wide. Lengths either side of both are
+    // where a piece gets dropped, repeated or double counted.
+    void test_long_text_chunk_boundaries()
+    {
+        auto connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_long_text_chunk_boundaries"),
+            NANODBC_TEXT("(id int, t ") + get_text_type_name() + NANODBC_TEXT(")"));
+
+        for (std::size_t const length :
+             {std::size_t{511},
+              std::size_t{512},
+              std::size_t{513},
+              std::size_t{1023},
+              std::size_t{1024},
+              std::size_t{1025},
+              std::size_t{5000}})
+        {
+            execute(connection, NANODBC_TEXT("delete from test_long_text_chunk_boundaries;"));
+
+            // Repeating rather than uniform, so a repeated piece shows up as a mismatch
+            // instead of blending in.
+            nanodbc::string value;
+            value.reserve(length);
+            for (std::size_t i = 0; i < length; ++i)
+                value.push_back(
+                    static_cast<nanodbc::string::value_type>(NANODBC_TEXT("abcdefghij")[i % 10]));
+
+            nanodbc::statement statement(connection);
+            statement.prepare(
+                NANODBC_TEXT("insert into test_long_text_chunk_boundaries (id, t) values (1, ?);"));
+            statement.bind(0, value.c_str());
+            statement.just_execute();
+
+            auto results =
+                execute(connection, NANODBC_TEXT("select t from test_long_text_chunk_boundaries;"));
+            REQUIRE(results.next());
+            auto const read_back = results.template get<nanodbc::string>(0);
+            REQUIRE(read_back.size() == length);
+            REQUIRE(read_back == value);
+        }
     }
 
     // A binary column is not bound, so the fetch leaves no indicator behind for it and

@@ -114,6 +114,19 @@ TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_integral", "[sqlite][batch][
     test_batch_insert_integral();
 }
 
+TEST_CASE_METHOD(
+    sqlite_fixture,
+    "test_rowset_size_apart_from_parameter_sets",
+    "[sqlite][result][rowset]")
+{
+    test_rowset_size_apart_from_parameter_sets();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_batch_delete", "[sqlite][batch][delete]")
+{
+    test_batch_delete();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_null", "[sqlite][batch][null]")
 {
     test_batch_insert_null();
@@ -132,6 +145,14 @@ TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_string", "[sqlite][batch][st
 TEST_CASE_METHOD(sqlite_fixture, "test_std_optional", "[sqlite][optional]")
 {
     test_std_optional();
+}
+
+TEST_CASE_METHOD(
+    sqlite_fixture,
+    "test_bind_timestamp_as_string",
+    "[sqlite][statement][bind][timestamp]")
+{
+    test_bind_timestamp_as_string();
 }
 
 TEST_CASE_METHOD(sqlite_fixture, "test_blob", "[sqlite][blob]")
@@ -479,6 +500,11 @@ TEST_CASE_METHOD(
     "[sqlite][transaction][rollback]")
 {
     test_nested_transaction_rollback();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_long_text_chunk_boundaries", "[sqlite][result][string]")
+{
+    test_long_text_chunk_boundaries();
 }
 
 TEST_CASE_METHOD(sqlite_fixture, "test_result_unbind", "[sqlite][result][unbind]")
