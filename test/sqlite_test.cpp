@@ -455,6 +455,32 @@ TEST_CASE_METHOD(sqlite_fixture, "test_execute_direct_batch_ops", "[sqlite][stat
     test_execute_direct_batch_ops();
 }
 
+TEST_CASE_METHOD(sqlite_fixture, "test_string_aggregate", "[sqlite][result][string]")
+{
+    test_string_aggregate();
+}
+
+TEST_CASE_METHOD(
+    sqlite_fixture,
+    "test_execute_prepared_statement_repeatedly",
+    "[sqlite][statement][prepare]")
+{
+    test_execute_prepared_statement_repeatedly();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_arithmetic_null_sentry", "[sqlite][bind][null]")
+{
+    test_bind_arithmetic_null_sentry();
+}
+
+TEST_CASE_METHOD(
+    sqlite_fixture,
+    "test_nested_transaction_rollback",
+    "[sqlite][transaction][rollback]")
+{
+    test_nested_transaction_rollback();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_result_unbind", "[sqlite][result][unbind]")
 {
     test_result_unbind();
@@ -591,4 +617,47 @@ TEST_CASE_METHOD(sqlite_fixture, "test_bind_every_form", "[sqlite][bind][batch]"
 TEST_CASE_METHOD(sqlite_fixture, "test_connect_by_datasource_name", "[sqlite][connection][dsn]")
 {
     test_connect_by_datasource_name();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_get_every_ctype", "[sqlite][result][types]")
+{
+    test_get_every_ctype();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_statement_timeout", "[sqlite][statement]")
+{
+    test_statement_timeout();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_wide_strings_with_sentry", "[sqlite][bind][unicode]")
+{
+    test_bind_wide_strings_with_sentry();
+}
+
+TEST_CASE_METHOD(
+    sqlite_fixture,
+    "test_parameter_metadata_before_description",
+    "[sqlite][statement]")
+{
+    test_parameter_metadata_before_description();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_binary_read_shapes", "[sqlite][result][binary]")
+{
+    test_binary_read_shapes();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_null_long_text_fallback", "[sqlite][result][null]")
+{
+    test_null_long_text_fallback();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_date_to_timestamp_parameter", "[sqlite][bind][date]")
+{
+    test_bind_date_to_timestamp_parameter();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_null_in_single_row_batch", "[sqlite][bind][null]")
+{
+    test_bind_null_in_single_row_batch();
 }

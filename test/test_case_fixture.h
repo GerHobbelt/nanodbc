@@ -869,6 +869,366 @@ struct test_case_fixture : public base_test_fixture
             connection.disconnect();
             REQUIRE(!connection.connected());
         }
+        {
+            // A login timeout is passed to the driver as an attribute, where zero is not.
+            nanodbc::connection connection(name, NANODBC_TEXT(""), NANODBC_TEXT(""), 5);
+            REQUIRE(connection.connected());
+        }
+    }
+
+    // get_ref_impl dispatches on the C type the driver bound the column as, which follows
+    // from the column's SQL type rather than from the type asked for. Reading each width
+    // back as several types walks both sides of that.
+    // Setting a query timeout, which some drivers decline. A request for the default is
+    // allowed to fail quietly; anything else is passed on.
+    // Parameter metadata is answered from a description the statement keeps, and described
+    // on demand when it has none. Asking before anything else has populated it takes the
+    // second path.
+    void test_parameter_metadata_before_description()
+    {
+        nanodbc::connection connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_parameter_metadata"),
+            NANODBC_TEXT("(i int, s varchar(60))"));
+
+        {
+            nanodbc::statement statement(connection);
+            prepare(
+                statement,
+                NANODBC_TEXT("insert into test_parameter_metadata (i, s) values (?, ?);"));
+            // Size first, so the description has to be fetched rather than looked up.
+            statement.parameter_size(1);
+            statement.parameter_type(1);
+            statement.parameter_scale(1);
+        }
+        {
+            nanodbc::statement statement(connection);
+            prepare(
+                statement,
+                NANODBC_TEXT("insert into test_parameter_metadata (i, s) values (?, ?);"));
+            statement.parameter_scale(0);
+        }
+        {
+            nanodbc::statement statement(connection);
+            prepare(
+                statement,
+                NANODBC_TEXT("insert into test_parameter_metadata (i, s) values (?, ?);"));
+            statement.parameter_type(0);
+        }
+    }
+
+    // Binary reads take a different path per shape: a short column is bound and copied out
+    // of the row buffer, a long one is fetched in chunks, and a null one reports itself.
+    // A long text column is unbound, so whether it is null is only known once it has been
+    // read: the fallback is chosen after the read rather than before it.
+    void test_null_long_text_fallback()
+    {
+        nanodbc::connection connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_null_long_text_fallback"),
+            NANODBC_TEXT("(id int, t ") + get_text_type_name() + NANODBC_TEXT(")"));
+        execute(
+            connection,
+            NANODBC_TEXT("insert into test_null_long_text_fallback (id, t) values (1, null);"));
+
+        auto results =
+            execute(connection, NANODBC_TEXT("select id, t from test_null_long_text_fallback;"));
+        REQUIRE(results.next());
+        // Not is_null() first: an unbound column reports what the fetch knew, and a read is
+        // what settles it.
+        REQUIRE(
+            results.get<nanodbc::string>(1, NANODBC_TEXT("fallback")) == NANODBC_TEXT("fallback"));
+        REQUIRE(
+            results.get<nanodbc::string>(NANODBC_TEXT("t"), NANODBC_TEXT("fallback")) ==
+            NANODBC_TEXT("fallback"));
+    }
+
+    // A date bound to a timestamp parameter, which ODBC lists as a supported C to SQL
+    // conversion. The buffer length has to be the date's own size; the parameter's declared
+    // precision says nothing about it.
+    void test_bind_date_to_timestamp_parameter()
+    {
+        nanodbc::connection connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_bind_date_to_timestamp"),
+            NANODBC_TEXT("(ts ") + get_timestamp_type_name() + NANODBC_TEXT(")"));
+
+        nanodbc::date const d{2006, 12, 30};
+        {
+            nanodbc::statement statement(connection);
+            prepare(
+                statement,
+                NANODBC_TEXT("insert into test_bind_date_to_timestamp (ts) values (?);"));
+            statement.bind(0, &d);
+            nanodbc::execute(statement);
+        }
+
+        auto results =
+            execute(connection, NANODBC_TEXT("select ts from test_bind_date_to_timestamp;"));
+        REQUIRE(results.next());
+        auto const ts = results.get<nanodbc::timestamp>(0);
+        REQUIRE(ts.year == d.year);
+        REQUIRE(ts.month == d.month);
+        REQUIRE(ts.day == d.day);
+    }
+
+    // A batch of one is still a batch: the null flags have to reach the driver whatever the
+    // size, and for a long time they did not, so a single row came out holding the value it
+    // was told was null.
+    void test_bind_null_in_single_row_batch()
+    {
+        nanodbc::connection connection = connect();
+
+        for (std::size_t batch : {std::size_t{1}, std::size_t{2}})
+        {
+            create_table(
+                connection,
+                NANODBC_TEXT("test_bind_null_single"),
+                NANODBC_TEXT("(i int, s varchar(20))"));
+
+            std::vector<int> ids(batch, 0);
+            for (std::size_t i = 0; i < batch; ++i)
+                ids[i] = static_cast<int>(i);
+            std::vector<nanodbc::string> strings(batch, NANODBC_TEXT("hello"));
+            std::vector<std::uint8_t> flags(batch, 0);
+            flags[0] = 1; // the first value is null
+
+            nanodbc::statement statement(connection);
+            prepare(
+                statement, NANODBC_TEXT("insert into test_bind_null_single (i, s) values (?, ?);"));
+            statement.bind(0, ids.data(), batch);
+            statement.bind_strings(1, strings, reinterpret_cast<bool const*>(flags.data()));
+            nanodbc::execute(statement, static_cast<long>(batch));
+
+            auto results = execute(
+                connection, NANODBC_TEXT("select count(*), count(s) from test_bind_null_single;"));
+            REQUIRE(results.next());
+            REQUIRE(results.get<int>(0) == static_cast<int>(batch));
+            REQUIRE(results.get<int>(0) - results.get<int>(1) == 1);
+        }
+    }
+
+    void test_binary_read_shapes()
+    {
+        nanodbc::connection connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_binary_read_shapes"),
+            NANODBC_TEXT("(id int, small_b ") + get_binary_type_name(4) +
+                NANODBC_TEXT(", long_b ") +
+                (vendor_ == database_vendor::postgresql ? get_binary_type_name()
+                                                        : get_binary_type_name(5000)) +
+                NANODBC_TEXT(")"));
+
+        std::vector<std::uint8_t> const small_value{1, 2, 3, 4};
+        std::vector<std::uint8_t> long_value(5000);
+        for (std::size_t i = 0; i < long_value.size(); ++i)
+            long_value[i] = static_cast<std::uint8_t>(i % 256);
+
+        {
+            nanodbc::statement statement(connection);
+            prepare(
+                statement,
+                NANODBC_TEXT(
+                    "insert into test_binary_read_shapes (id, small_b, long_b) values (?, ?, ?);"));
+            int const id = 0;
+            statement.bind(0, &id);
+            std::vector<std::vector<std::uint8_t>> const smalls{small_value};
+            std::vector<std::vector<std::uint8_t>> const longs{long_value};
+            statement.bind(1, smalls);
+            statement.bind(2, longs);
+            nanodbc::execute(statement);
+        }
+        execute(
+            connection,
+            NANODBC_TEXT(
+                "insert into test_binary_read_shapes (id, small_b, long_b) "
+                "values (1, null, null);"));
+
+        auto results = execute(
+            connection,
+            NANODBC_TEXT("select id, small_b, long_b from test_binary_read_shapes order by id;"));
+
+        REQUIRE(results.next());
+        REQUIRE(results.get<std::vector<std::uint8_t>>(1) == small_value);
+        REQUIRE(results.get<std::vector<std::uint8_t>>(2) == long_value);
+
+        // The null row, read the same two ways.
+        REQUIRE(results.next());
+        REQUIRE(results.is_null(1));
+        REQUIRE(results.is_null(2));
+        REQUIRE(results.get<std::vector<std::uint8_t>>(1, std::vector<std::uint8_t>{}).empty());
+        REQUIRE(results.get<std::vector<std::uint8_t>>(2, std::vector<std::uint8_t>{}).empty());
+
+        // By name as well as by position: the fallback for an unbound column is decided
+        // after the read rather than before it, on a path of its own.
+        REQUIRE(
+            results
+                .get<std::vector<std::uint8_t>>(NANODBC_TEXT("long_b"), std::vector<std::uint8_t>{})
+                .empty());
+        REQUIRE(results
+                    .get<std::vector<std::uint8_t>>(
+                        NANODBC_TEXT("small_b"), std::vector<std::uint8_t>{})
+                    .empty());
+
+        REQUIRE(!results.next());
+    }
+
+    void test_statement_timeout()
+    {
+        nanodbc::connection connection = connect();
+        nanodbc::statement statement(connection);
+        prepare(statement, NANODBC_TEXT("select 1;"));
+        statement.timeout(0);
+        try
+        {
+            statement.timeout(10);
+        }
+        catch (nanodbc::database_error const&)
+        {
+        }
+        auto results = statement.execute();
+        REQUIRE(results.next());
+    }
+
+    // The sentry form for wide strings, which compares by narrowing both sides. Not wired
+    // to PostgreSQL: its ANSI driver rejects SQL_C_WCHAR outright.
+    void test_bind_wide_strings_with_sentry()
+    {
+        nanodbc::connection connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_bind_wide_strings_with_sentry"),
+            NANODBC_TEXT("(id int, s varchar(10))"));
+
+        // wide_string is wstring under MSVC, u16string elsewhere and u32string under iODBC,
+        // so the values are widened from ASCII rather than written as literals.
+        auto const widen = [](char const* text)
+        {
+            nanodbc::wide_string out;
+            for (auto p = text; *p != '\0'; ++p)
+                out.push_back(static_cast<nanodbc::wide_char_t>(*p));
+            return out;
+        };
+
+        int const ids[3] = {0, 1, 2};
+        std::vector<nanodbc::wide_string> const values{
+            widen("alpha"), widen("skip"), widen("gamma")};
+        nanodbc::wide_string const sentry = widen("skip");
+
+        {
+            nanodbc::statement statement(connection);
+            prepare(
+                statement,
+                NANODBC_TEXT(
+                    "insert into test_bind_wide_strings_with_sentry (id, s) "
+                    "values (?, ?);"));
+            statement.bind(0, ids, 3);
+            statement.bind_strings(1, values, sentry.c_str());
+            nanodbc::transact(statement, 3);
+        }
+
+        auto results = execute(
+            connection,
+            NANODBC_TEXT("select count(*), count(s) from test_bind_wide_strings_with_sentry;"));
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == 3);
+        REQUIRE(results.get<int>(1) == 2);
+    }
+
+    void test_get_every_ctype()
+    {
+        nanodbc::connection connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_get_every_ctype"),
+            NANODBC_TEXT(
+                "(ti smallint, si smallint, i int, bi bigint, f float, d float, "
+                "s varchar(10), b ") +
+                get_bool_type_name() + NANODBC_TEXT(")"));
+        // PostgreSQL will not take an integer for a boolean column.
+        nanodbc::string const yes =
+            vendor_ == database_vendor::postgresql ? NANODBC_TEXT("true") : NANODBC_TEXT("1");
+        execute(
+            connection,
+            NANODBC_TEXT(
+                "insert into test_get_every_ctype (ti, si, i, bi, f, d, s, b) "
+                "values (7, 300, 70000, 5000000000, 1.5, 2.5, '9', ") +
+                yes + NANODBC_TEXT(");"));
+
+        auto results = execute(
+            connection,
+            NANODBC_TEXT("select ti, si, i, bi, f, d, s, b from test_get_every_ctype;"));
+        REQUIRE(results.next());
+
+        // Each column read as a type wide enough to hold it, and as a double.
+        REQUIRE(results.get<short>(0) == 7);
+        REQUIRE(results.get<int>(0) == 7);
+        REQUIRE(results.get<long long>(0) == 7);
+        REQUIRE(results.get<double>(0) == 7.0);
+
+        REQUIRE(results.get<int>(1) == 300);
+        REQUIRE(results.get<long>(1) == 300);
+        REQUIRE(results.get<long long>(1) == 300);
+
+        REQUIRE(results.get<int>(2) == 70000);
+        REQUIRE(results.get<long long>(2) == 70000);
+        REQUIRE(results.get<double>(2) == 70000.0);
+
+        REQUIRE(results.get<long long>(3) == 5000000000LL);
+        REQUIRE(results.get<double>(3) == 5000000000.0);
+
+        REQUIRE(results.get<float>(4) == 1.5f);
+        REQUIRE(results.get<double>(4) == 1.5);
+        REQUIRE(results.get<int>(4) == 1);
+
+        REQUIRE(results.get<double>(5) == 2.5);
+        REQUIRE(results.get<float>(5) == 2.5f);
+
+        // Rendering as text is a conversion per type, and every integer width has one.
+        REQUIRE(results.get<nanodbc::string>(0) == NANODBC_TEXT("7"));
+        REQUIRE(results.get<nanodbc::string>(1) == NANODBC_TEXT("300"));
+        REQUIRE(results.get<nanodbc::string>(2) == NANODBC_TEXT("70000"));
+        REQUIRE(results.get<nanodbc::string>(3) == NANODBC_TEXT("5000000000"));
+        REQUIRE(!results.get<nanodbc::string>(4).empty());
+        REQUIRE(!results.get<nanodbc::string>(5).empty());
+
+        // A bound character column read as a character goes through the string column path;
+        // a long one would be unbound and read with SQLGetData instead.
+        REQUIRE(results.get<char>(6) == '9');
+        REQUIRE(results.get<nanodbc::string>(6) == NANODBC_TEXT("9"));
+
+        REQUIRE(results.get<bool>(7) == true);
+        REQUIRE(results.get<int>(7) == 1);
+
+        // A type the column cannot become is an error rather than a wrong answer, in both
+        // directions: a number read as a date, and a date read as a number.
+        REQUIRE_THROWS_AS(results.get<nanodbc::date>(2), nanodbc::type_incompatible_error);
+        REQUIRE_THROWS_AS(
+            results.get<std::vector<std::uint8_t>>(2), nanodbc::type_incompatible_error);
+
+        create_table(
+            connection, NANODBC_TEXT("test_get_every_ctype_date"), NANODBC_TEXT("(d date)"));
+        execute(
+            connection,
+            NANODBC_TEXT("insert into test_get_every_ctype_date (d) values ('2006-12-30');"));
+        auto dates = execute(connection, NANODBC_TEXT("select d from test_get_every_ctype_date;"));
+        REQUIRE(dates.next());
+        REQUIRE_THROWS_AS(dates.get<int>(0), nanodbc::type_incompatible_error);
+
+        // A real column binds narrower than a float one, which is a case of its own.
+        create_table(
+            connection, NANODBC_TEXT("test_get_every_ctype_real"), NANODBC_TEXT("(r real)"));
+        execute(
+            connection, NANODBC_TEXT("insert into test_get_every_ctype_real (r) values (1.5);"));
+        auto reals = execute(connection, NANODBC_TEXT("select r from test_get_every_ctype_real;"));
+        REQUIRE(reals.next());
+        REQUIRE(reals.get<float>(0) == 1.5f);
+        REQUIRE(reals.get<double>(0) == 1.5);
+        REQUIRE(!reals.get<nanodbc::string>(0).empty());
     }
 
     void test_bind_every_form()
@@ -894,6 +1254,18 @@ struct test_case_fixture : public base_test_fixture
         auto const real_column = NANODBC_TEXT("float");
         check_bind_forms<float>(real_column, 1.5f, 2.5f, 3.5f);
         check_bind_forms<double>(real_column, 1.5, 2.5, 3.5);
+
+        // The temporal types compare field by field rather than with ==.
+        check_bind_forms<nanodbc::date>(
+            NANODBC_TEXT("date"),
+            nanodbc::date{2020, 1, 1},
+            nanodbc::date{2021, 2, 2},
+            nanodbc::date{2022, 3, 3});
+        check_bind_forms<nanodbc::timestamp>(
+            get_timestamp_type_name(),
+            nanodbc::timestamp{2020, 1, 1, 1, 1, 1, 0},
+            nanodbc::timestamp{2021, 2, 2, 2, 2, 2, 0},
+            nanodbc::timestamp{2022, 3, 3, 3, 3, 3, 0});
 
         // The character instantiation: bind takes c_str() and the driver reads to the
         // terminator, so it takes one value rather than a batch.
@@ -1194,6 +1566,172 @@ struct test_case_fixture : public base_test_fixture
             REQUIRE(!results.is_bound(0));
             REQUIRE(!results.is_bound(1));
         }
+    }
+
+    // An aggregate builds a value longer than any row it read, so the column size the
+    // driver reports for it is a guess at best. Reading one back whole is what proves
+    // nanodbc sized its buffer from the value rather than from the guess.
+    void test_string_aggregate()
+    {
+        auto connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_string_aggregate"),
+            NANODBC_TEXT("(i int, v varchar(20))"));
+
+        // Fifty ten-character rows joined by one separator each: comfortably past the
+        // 255 bytes that truncation reports tend to stop at, and short of the 1024 that
+        // MySQL's group_concat_max_len cuts at by default.
+        std::size_t const rows = 50;
+        nanodbc::string const value = NANODBC_TEXT("0123456789");
+        for (std::size_t i = 0; i < rows; ++i)
+        {
+            execute(
+                connection,
+                NANODBC_TEXT("insert into test_string_aggregate (i, v) values (1, '") + value +
+                    NANODBC_TEXT("');"));
+        }
+
+        auto const expected = rows * value.size() + (rows - 1);
+
+        auto results = execute(
+            connection,
+            NANODBC_TEXT("select ") +
+                get_string_agg_expression(NANODBC_TEXT("v"), NANODBC_TEXT(",")) +
+                NANODBC_TEXT(" from test_string_aggregate;"));
+        REQUIRE(results.next());
+        REQUIRE(results.get<nanodbc::string>(0).size() == expected);
+
+        // The same value by name, which takes a different lookup to the same column.
+        auto by_name = execute(
+            connection,
+            NANODBC_TEXT("select ") +
+                get_string_agg_expression(NANODBC_TEXT("v"), NANODBC_TEXT(",")) +
+                NANODBC_TEXT(" as joined from test_string_aggregate;"));
+        REQUIRE(by_name.next());
+        REQUIRE(by_name.get<nanodbc::string>(NANODBC_TEXT("joined")).size() == expected);
+    }
+
+    // Preparing once and executing many times is the point of preparing at all. The
+    // parameters are described when the statement is prepared, so re-binding between
+    // executions must not describe them again.
+    void test_execute_prepared_statement_repeatedly()
+    {
+        auto connection = connect();
+        create_table(
+            connection,
+            NANODBC_TEXT("test_execute_prepared_statement_repeatedly"),
+            NANODBC_TEXT("(k int)"));
+        execute(
+            connection,
+            NANODBC_TEXT(
+                "insert into test_execute_prepared_statement_repeatedly (k) values "
+                "(1), (2), (3), (4);"));
+
+        nanodbc::statement statement(connection);
+        statement.prepare(
+            NANODBC_TEXT("delete from test_execute_prepared_statement_repeatedly where k = ?;"));
+
+        for (int key = 1; key <= 3; ++key)
+        {
+            statement.bind(0, &key);
+            statement.just_execute();
+        }
+
+        auto results = execute(
+            connection,
+            NANODBC_TEXT("select count(*) from test_execute_prepared_statement_repeatedly;"));
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == 1);
+    }
+
+    // A sentry marks which of a batch of values are null, and is read whether or not the
+    // separate nulls array was also given. The two were once entangled, so that passing a
+    // sentry without a nulls array marked nothing.
+    void test_bind_arithmetic_null_sentry()
+    {
+        auto connection = connect();
+        create_table(
+            connection, NANODBC_TEXT("test_bind_arithmetic_null_sentry"), NANODBC_TEXT("(i int)"));
+
+        int const values[] = {10, -1, 30, -1, 50};
+        int const sentry = -1;
+        std::size_t const batch = 5;
+
+        nanodbc::statement statement(connection);
+        statement.prepare(
+            NANODBC_TEXT("insert into test_bind_arithmetic_null_sentry (i) values (?);"));
+        statement.bind(0, values, batch, &sentry);
+        transact(statement, static_cast<long>(batch));
+
+        auto results = execute(
+            connection,
+            NANODBC_TEXT(
+                "select count(*), sum(case when i is null then 1 else 0 end) "
+                "from test_bind_arithmetic_null_sentry;"));
+        REQUIRE(results.next());
+        REQUIRE(results.get<int>(0) == 5);
+        REQUIRE(results.get<int>(1) == 2);
+    }
+
+    // Transactions on one connection share a single ODBC transaction, there being no
+    // savepoints underneath, so a rollback anywhere within it discards all of it. An
+    // outer commit cannot rescue work an inner transaction asked to throw away.
+    void test_nested_transaction_rollback()
+    {
+        auto connection = connect();
+        create_table(
+            connection, NANODBC_TEXT("test_nested_transaction_rollback"), NANODBC_TEXT("(i int)"));
+
+        auto const count = [&]()
+        {
+            auto results = execute(
+                connection, NANODBC_TEXT("select count(*) from test_nested_transaction_rollback;"));
+            results.next();
+            return results.template get<int>(0);
+        };
+
+        // Inner rolls back, outer commits: nothing is kept.
+        {
+            nanodbc::transaction outer(connection);
+            {
+                nanodbc::transaction inner(connection);
+                execute(
+                    connection,
+                    NANODBC_TEXT("insert into test_nested_transaction_rollback values (1);"));
+                inner.rollback();
+            }
+            outer.commit();
+        }
+        REQUIRE(count() == 0);
+
+        // Inner commits, outer rolls back: nothing is kept either.
+        {
+            nanodbc::transaction outer(connection);
+            {
+                nanodbc::transaction inner(connection);
+                execute(
+                    connection,
+                    NANODBC_TEXT("insert into test_nested_transaction_rollback values (2);"));
+                inner.commit();
+            }
+            outer.rollback();
+        }
+        REQUIRE(count() == 0);
+
+        // Both commit: the work is kept.
+        {
+            nanodbc::transaction outer(connection);
+            {
+                nanodbc::transaction inner(connection);
+                execute(
+                    connection,
+                    NANODBC_TEXT("insert into test_nested_transaction_rollback values (3);"));
+                inner.commit();
+            }
+            outer.commit();
+        }
+        REQUIRE(count() == 1);
     }
 
     // A binary column is not bound, so the fetch leaves no indicator behind for it and
@@ -2596,6 +3134,16 @@ PRIMARY KEY(t2_fid)
             nanodbc::implementation_row_descriptor ird(s);
             REQUIRE(ird.count() == 3);
             REQUIRE(ird.count() == ird.count());
+
+            // The descriptor can also be taken from a result, and reports how it was
+            // allocated. Both describe the same statement, so both count the same columns.
+            {
+                auto r = nanodbc::execute(c, sql);
+                nanodbc::implementation_row_descriptor from_result(r);
+                REQUIRE(from_result.count() == ird.count());
+                REQUIRE(from_result.alloc_type() != 0);
+            }
+            REQUIRE(ird.alloc_type() != 0);
             for (short i = 0; i < ird.count(); i++)
             {
                 if (vendor_ == database_vendor::mysql)

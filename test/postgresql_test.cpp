@@ -337,6 +337,32 @@ TEST_CASE_METHOD(
     test_execute_direct_batch_ops();
 }
 
+TEST_CASE_METHOD(postgresql_fixture, "test_string_aggregate", "[postgresql][result][string]")
+{
+    test_string_aggregate();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_execute_prepared_statement_repeatedly",
+    "[postgresql][statement][prepare]")
+{
+    test_execute_prepared_statement_repeatedly();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_bind_arithmetic_null_sentry", "[postgresql][bind][null]")
+{
+    test_bind_arithmetic_null_sentry();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_nested_transaction_rollback",
+    "[postgresql][transaction][rollback]")
+{
+    test_nested_transaction_rollback();
+}
+
 TEST_CASE_METHOD(postgresql_fixture, "test_result_unbind", "[postgresql][result][unbind]")
 {
     test_result_unbind();
@@ -604,4 +630,48 @@ TEST_CASE_METHOD(postgresql_fixture, "test_just_execute_forms", "[postgresql][ex
 TEST_CASE_METHOD(postgresql_fixture, "test_bind_every_form", "[postgresql][bind][batch]")
 {
     test_bind_every_form();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_get_every_ctype", "[postgresql][result][types]")
+{
+    test_get_every_ctype();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_statement_timeout", "[postgresql][statement]")
+{
+    test_statement_timeout();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_parameter_metadata_before_description",
+    "[postgresql][statement]")
+{
+    test_parameter_metadata_before_description();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_binary_read_shapes", "[postgresql][result][binary]")
+{
+    test_binary_read_shapes();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_null_long_text_fallback", "[postgresql][result][null]")
+{
+    test_null_long_text_fallback();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_bind_date_to_timestamp_parameter",
+    "[postgresql][bind][date]")
+{
+    test_bind_date_to_timestamp_parameter();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_bind_null_in_single_row_batch",
+    "[postgresql][bind][null]")
+{
+    test_bind_null_in_single_row_batch();
 }

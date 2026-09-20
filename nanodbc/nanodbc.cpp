@@ -56,9 +56,10 @@ struct is_optional<std::optional<T>> : std::true_type
 
 #ifdef NANODBC_ENABLE_BOOST
 #include <boost/locale/encoding_utf.hpp>
-#elif defined(__GNUC__) && (__GNUC__ < 5)
-#include <cwchar>
 #endif
+
+// std::wcslen
+#include <cwchar>
 
 #ifdef __APPLE__
 // silence spurious OS X deprecation warnings
@@ -1770,7 +1771,20 @@ public:
         if (conn_.unref_transaction() == 0 && conn_.connected())
         {
             RETCODE rc = SQL_SUCCESS;
-            NANODBC_CALL_RC(SQLEndTran, rc, SQL_HANDLE_DBC, conn_.native_dbc_handle(), SQL_COMMIT);
+            // Transactions on one connection share a single ODBC transaction, so a
+            // rollback anywhere within it discards all of it. The flag says one was
+            // asked for, and the destructor has always honoured it.
+            if (conn_.rollback())
+            {
+                NANODBC_CALL_RC(
+                    SQLEndTran, rc, SQL_HANDLE_DBC, conn_.native_dbc_handle(), SQL_ROLLBACK);
+                conn_.rollback(false);
+            }
+            else
+            {
+                NANODBC_CALL_RC(
+                    SQLEndTran, rc, SQL_HANDLE_DBC, conn_.native_dbc_handle(), SQL_COMMIT);
+            }
             if (!success(rc))
                 NANODBC_THROW_DATABASE_ERROR(conn_.native_dbc_handle(), SQL_HANDLE_DBC);
         }
@@ -2516,6 +2530,13 @@ public:
             param_size = SQL_SS_LENGTH_UNLIMITED;
         }
 
+        // Buffer length is the size of one element of the bound array. Where the caller
+        // stated it that is the answer, and otherwise it is the bound type's own size,
+        // which the column's is not: a date is six bytes whatever precision the parameter
+        // was declared with.
+        auto const buffer_length =
+            buffer.value_size_ > 0 ? buffer.value_size_ : static_cast<std::size_t>(sizeof(T));
+
         RETCODE rc = SQL_SUCCESS;
         NANODBC_CALL_RC(
             SQLBindParameter,
@@ -2528,7 +2549,7 @@ public:
             param_size,       // column size ignored for many types, but needed for strings
             param.scale_,     // decimal digits
             (SQLPOINTER)buffer.values_, // parameter value
-            value_size,                 // buffer length
+            buffer_length,              // buffer length
             bind_len_or_null_[param.index_].data());
 
         if (!success(rc))
@@ -2545,7 +2566,13 @@ public:
             throw programming_error("cannot bind parameter, close tvp first");
 #endif
 
-        auto const buffer_size = buffer.value_size_ > 0 ? buffer.value_size_ : param.size_;
+        // Buffer length is a count of bytes, where the parameter's size is a count of
+        // digits for a numeric column and says nothing about how long the text is. A sign
+        // or a decimal point is enough to make the text the longer of the two, so the
+        // length of the value is measured rather than assumed.
+        auto buffer_size = buffer.value_size_;
+        if (buffer_size == 0)
+            buffer_size = (std::char_traits<T>::length(buffer.values_) + 1) * sizeof(T);
 
         RETCODE rc = SQL_SUCCESS;
         NANODBC_CALL_RC(
@@ -2560,7 +2587,7 @@ public:
             param.scale_,     // decimal digits
             (SQLPOINTER)buffer.values_, // parameter value
             buffer_size,                // buffer length
-            (buffer.size_ <= 1 ? nullptr : bind_len_or_null_[param.index_].data()));
+            bind_len_or_null_[param.index_].data());
 
         if (!success(rc))
             NANODBC_THROW_DATABASE_ERROR(stmt_, SQL_HANDLE_STMT);
@@ -2768,23 +2795,26 @@ void statement::statement_impl::bind(
     prepare_bind(param_index, batch_size, direction, param);
 
     // prepare_bind starts every indicator out as SQL_NULL_DATA, so only the values that
-    // are not null need marking here.
+    // are not null need marking here. A character value carries its own end, so it is
+    // marked as terminated rather than as being the width of the parameter.
+    auto const present = is_character<T>::value ? static_cast<null_type>(SQL_NTS)
+                                                : static_cast<null_type>(param.size_);
     if (null_sentry)
     {
         for (std::size_t i = 0; i < batch_size; ++i)
             if (!equals(values[i], *null_sentry))
-                bind_len_or_null_[param_index][i] = param.size_;
+                bind_len_or_null_[param_index][i] = present;
     }
     else if (nulls)
     {
         for (std::size_t i = 0; i < batch_size; ++i)
             if (!nulls[i])
-                bind_len_or_null_[param_index][i] = param.size_;
+                bind_len_or_null_[param_index][i] = present;
     }
     else
     {
         for (std::size_t i = 0; i < batch_size; ++i)
-            bind_len_or_null_[param_index][i] = param.size_;
+            bind_len_or_null_[param_index][i] = present;
     }
 
     bound_buffer<T> buffer(values, batch_size);
@@ -3211,6 +3241,13 @@ public:
             param_size = SQL_SS_LENGTH_UNLIMITED;
         }
 
+        // Buffer length is the size of one element of the bound array. Where the caller
+        // stated it that is the answer, and otherwise it is the bound type's own size,
+        // which the column's is not: a date is six bytes whatever precision the parameter
+        // was declared with.
+        auto const buffer_length =
+            buffer.value_size_ > 0 ? buffer.value_size_ : static_cast<std::size_t>(sizeof(T));
+
         auto stmt_impl = stmt_.lock();
         NANODBC_ASSERT(stmt_impl != nullptr);
 
@@ -3226,7 +3263,7 @@ public:
             param_size,   // column size ignored for many types, but needed for strings
             param.scale_, // decimal digits
             (SQLPOINTER)buffer.values_, // parameter value
-            value_size,                 // buffer length
+            buffer_length,              // buffer length
             bind_len_or_null_[param.index_].data());
 
         if (!success(rc))
@@ -3256,7 +3293,7 @@ public:
             param.scale_, // decimal digits
             (SQLPOINTER)buffer.values_, // parameter value
             buffer_size,                // buffer length
-            (buffer.size_ <= 1 ? nullptr : bind_len_or_null_[param.index_].data()));
+            bind_len_or_null_[param.index_].data());
 
         if (!success(rc))
             NANODBC_THROW_DATABASE_ERROR(stmt_impl->native_statement_handle(), SQL_HANDLE_STMT);
@@ -3475,23 +3512,26 @@ void table_valued_parameter::table_valued_parameter_impl::bind(
     prepare_bind(param_index, batch_size, param);
 
     // prepare_bind starts every indicator out as SQL_NULL_DATA, so only the values that
-    // are not null need marking here.
+    // are not null need marking here. A character value carries its own end, so it is
+    // marked as terminated rather than as being the width of the parameter.
+    auto const present = is_character<T>::value ? static_cast<null_type>(SQL_NTS)
+                                                : static_cast<null_type>(param.size_);
     if (null_sentry)
     {
         for (std::size_t i = 0; i < batch_size; ++i)
             if (!equals(values[i], *null_sentry))
-                bind_len_or_null_[param_index][i] = param.size_;
+                bind_len_or_null_[param_index][i] = present;
     }
     else if (nulls)
     {
         for (std::size_t i = 0; i < batch_size; ++i)
             if (!nulls[i])
-                bind_len_or_null_[param_index][i] = param.size_;
+                bind_len_or_null_[param_index][i] = present;
     }
     else
     {
         for (std::size_t i = 0; i < batch_size; ++i)
-            bind_len_or_null_[param_index][i] = param.size_;
+            bind_len_or_null_[param_index][i] = present;
     }
 
     bound_buffer<T> buffer(values, batch_size);
@@ -4098,6 +4138,10 @@ public:
         if (is_null(column))
             throw null_access_error();
         get_ref_impl<T>(column, result);
+
+        // An unbound column's null is only known once SQLGetData has run.
+        if (is_null(column))
+            throw null_access_error();
     }
 
 #ifdef NANODBC_HAS_STD_OPTIONAL
@@ -4111,6 +4155,10 @@ public:
             return;
         }
         get_ref_impl<std::remove_reference_t<decltype(*result)>>(column, *result);
+
+        // An unbound column's null is only known once SQLGetData has run.
+        if (is_null(column))
+            opt_reset(result);
     }
 #endif
 
@@ -4148,6 +4196,10 @@ public:
         if (is_null(column))
             throw null_access_error();
         get_ref_impl<T>(column, result);
+
+        // An unbound column's null is only known once SQLGetData has run.
+        if (is_null(column))
+            throw null_access_error();
     }
 
 #ifdef NANODBC_HAS_STD_OPTIONAL
@@ -4161,6 +4213,10 @@ public:
             return;
         }
         get_ref_impl<std::remove_reference_t<decltype(*result)>>(column, *result);
+
+        // An unbound column's null is only known once SQLGetData has run.
+        if (is_null(column))
+            opt_reset(result);
     }
 #endif
 
@@ -4170,7 +4226,8 @@ public:
         short const column = this->column(column_name);
         if (is_null(column))
         {
-            NANODBC_ASSERT(is_bound(column));
+            // Not asserted to be bound: an unbound column reports itself null here too, and
+            // MySQL sets the indicator to SQL_NULL_DATA from SQLBindCol regardless.
             result = fallback;
             return;
         }
@@ -4236,6 +4293,39 @@ private:
     {
         if ((column < 0) || (column >= bound_columns_size_))
             throw index_range_error();
+    }
+
+    // Whether the driver will hand over a column that is already bound. Drivers that say
+    // no include SQL Server's, so a re-read has to be asked for rather than assumed.
+    bool supports_get_data_on_bound_column() const
+    {
+        if (get_data_extensions_ < 0)
+        {
+            try
+            {
+                get_data_extensions_ = static_cast<int>(
+                    stmt_.connection().get_info<SQLUINTEGER>(SQL_GETDATA_EXTENSIONS));
+            }
+            catch (...)
+            {
+                get_data_extensions_ = 0;
+            }
+        }
+        return (get_data_extensions_ & SQL_GD_BOUND) != 0;
+    }
+
+    // A driver may report a column size smaller than the values it goes on to return, in
+    // which case the bound buffer is too small and the fetch fills it and reports how much
+    // there was. The indicator counts the bytes available, not the bytes written.
+    bool bound_column_was_truncated(short column) const
+    {
+        bound_column const& col = bound_columns_[column];
+        if (!col.bound_ || col.blob_ || col.clen_ == 0)
+            return false;
+        SQLLEN const indicator = col.cbdata_[static_cast<std::size_t>(rowset_position_)];
+        if (indicator == SQL_NULL_DATA || indicator == SQL_NO_TOTAL || indicator < 0)
+            return false;
+        return static_cast<SQLULEN>(indicator) >= col.clen_;
     }
 
     void before_move() noexcept
@@ -4333,7 +4423,7 @@ private:
                 NANODBC_THROW_DATABASE_ERROR(stmt_.native_statement_handle(), SQL_HANDLE_STMT);
 
             bound_column& col = bound_columns_[i];
-            col.name_ = reinterpret_cast<string::value_type*>(column_name);
+            col.name_ = static_cast<string::value_type*>(static_cast<void*>(column_name));
             col.column_ = i;
             col.sqltype_ = sqltype;
             col.sqlsize_ = sqlsize;
@@ -4565,6 +4655,8 @@ private:
     bool async_; // true if statement is currently in SQL_STILL_EXECUTING mode
 #endif
     bool has_unbound_;
+    // SQL_GETDATA_EXTENSIONS, read once on first use. -1 until then.
+    mutable int get_data_extensions_ = -1;
 };
 
 template <>
@@ -4714,7 +4806,10 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
             return;
         }
 
-        if (!is_bound(column))
+        // A bound column whose value did not fit is read again the unbound way, which
+        // asks the driver for the value in full rather than for as much as was guessed.
+        if (!is_bound(column) ||
+            (bound_column_was_truncated(column) && supports_get_data_on_bound_column()))
         {
             // Input is always std::string, while output may be std::string or wide_string
             std::string out;
@@ -4769,7 +4864,10 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
 
     case SQL_C_WCHAR:
     {
-        if (!is_bound(column))
+        // A bound column whose value did not fit is read again the unbound way, which
+        // asks the driver for the value in full rather than for as much as was guessed.
+        if (!is_bound(column) ||
+            (bound_column_was_truncated(column) && supports_get_data_on_bound_column()))
         {
             // Input is always wide_string, output might be std::string or wide_string.
             // Use a string builder to build the output string.
@@ -4818,12 +4916,19 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
         }
         else
         { // bound and not blob
-            SQLWCHAR const* s =
-                reinterpret_cast<SQLWCHAR*>(col.pdata_.get() + rowset_position_ * col.clen_);
-            string::size_type const str_size =
-                col.cbdata_[static_cast<size_t>(rowset_position_)] / sizeof(SQLWCHAR);
-            auto const us = reinterpret_cast<wide_char_t const*>(
-                s); // no-op or unsigned short to signed char16_t
+            void* const data = col.pdata_.get() + rowset_position_ * col.clen_;
+            SQLWCHAR const* s = static_cast<SQLWCHAR*>(data);
+            // The indicator counts the characters available, which exceeds what the buffer
+            // holds when the driver under-reported the column size and would not hand the
+            // column over again. Reading past the buffer is not among the options.
+            std::size_t const capacity = col.clen_ / sizeof(SQLWCHAR);
+            std::size_t const available =
+                static_cast<std::size_t>(col.cbdata_[static_cast<size_t>(rowset_position_)]) /
+                sizeof(SQLWCHAR);
+            string::size_type const str_size = static_cast<string::size_type>(
+                std::min(available, capacity > 0 ? capacity - 1 : std::size_t{0}));
+            // No-op, or unsigned short to signed char16_t.
+            auto const us = static_cast<wide_char_t const*>(static_cast<void const*>(s));
             convert(us, str_size, result);
         }
         return;
@@ -4831,13 +4936,40 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
 
     // std::to_string renders each as the SQL type demands: "%d" and "%lld" for integers,
     // "%f" for floating point, whose column scale is undefined.
+    case SQL_C_BIT:
+    case SQL_C_TINYINT:
+    case SQL_C_STINYINT:
+        convert(std::to_string(*ensure_pdata<int8_t>(column)), result);
+        return;
+
+    case SQL_C_UTINYINT:
+        convert(std::to_string(*ensure_pdata<uint8_t>(column)), result);
+        return;
+
+    case SQL_C_SHORT:
+    case SQL_C_SSHORT:
+        convert(std::to_string(*ensure_pdata<int16_t>(column)), result);
+        return;
+
+    case SQL_C_USHORT:
+        convert(std::to_string(*ensure_pdata<uint16_t>(column)), result);
+        return;
+
     case SQL_C_LONG:
     case SQL_C_SLONG:
         convert(std::to_string(*ensure_pdata<int32_t>(column)), result);
         return;
 
+    case SQL_C_ULONG:
+        convert(std::to_string(*ensure_pdata<uint32_t>(column)), result);
+        return;
+
     case SQL_C_SBIGINT:
         convert(std::to_string(*ensure_pdata<int64_t>(column)), result);
+        return;
+
+    case SQL_C_UBIGINT:
+        convert(std::to_string(*ensure_pdata<uint64_t>(column)), result);
         return;
 
     case SQL_C_FLOAT:
@@ -4851,6 +4983,12 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
     case SQL_C_DATE:
     {
         const date d = *ensure_pdata<date>(column);
+        // An unbound column reports null only once SQLGetData has run, and a null leaves
+        // the buffer zeroed, whose month and day are then out of range. Rendering that is
+        // not portable: the Microsoft CRT ends the process rather than return from
+        // strftime. The caller tests for the null again after this returns.
+        if (is_null(column))
+            return;
         std::tm st{};
         st.tm_year = d.year - 1900;
         st.tm_mon = d.month - 1;
@@ -4895,6 +5033,12 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
     case SQL_C_TIMESTAMP:
     {
         const timestamp stamp = *ensure_pdata<timestamp>(column);
+        // An unbound column reports null only once SQLGetData has run, and a null leaves
+        // the buffer zeroed, whose month and day are then out of range. Rendering that is
+        // not portable: the Microsoft CRT ends the process rather than return from
+        // strftime. The caller tests for the null again after this returns.
+        if (is_null(column))
+            return;
         std::tm st{};
         st.tm_year = stamp.year - 1900;
         st.tm_mon = stamp.month - 1;
@@ -5280,8 +5424,9 @@ std::unique_ptr<T, std::function<void(T*)>> result::result_impl::ensure_pdata(sh
     {
         // Return a unique_ptr with a no-op deleter as this memory allocation
         // is managed (allocated and released) elsewhere.
+        void* const data = col.pdata_.get() + rowset_position_ * col.clen_;
         return std::unique_ptr<T, std::function<void(T*)>>(
-            (T*)(col.pdata_.get() + rowset_position_ * col.clen_), [](T*) noexcept {});
+            static_cast<T*>(data), [](T*) noexcept {});
     }
 
     std::unique_ptr<T> buffer = std::make_unique<T>();

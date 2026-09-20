@@ -387,6 +387,32 @@ TEST_CASE_METHOD(mysql_fixture, "test_execute_direct_batch_ops", "[mysql][statem
     test_execute_direct_batch_ops();
 }
 
+TEST_CASE_METHOD(mysql_fixture, "test_string_aggregate", "[mysql][result][string]")
+{
+    test_string_aggregate();
+}
+
+TEST_CASE_METHOD(
+    mysql_fixture,
+    "test_execute_prepared_statement_repeatedly",
+    "[mysql][statement][prepare]")
+{
+    test_execute_prepared_statement_repeatedly();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_bind_arithmetic_null_sentry", "[mysql][bind][null]")
+{
+    test_bind_arithmetic_null_sentry();
+}
+
+TEST_CASE_METHOD(
+    mysql_fixture,
+    "test_nested_transaction_rollback",
+    "[mysql][transaction][rollback]")
+{
+    test_nested_transaction_rollback();
+}
+
 TEST_CASE_METHOD(mysql_fixture, "test_result_unbind", "[mysql][result][unbind]")
 {
     test_result_unbind();
@@ -515,4 +541,73 @@ TEST_CASE_METHOD(mysql_fixture, "test_just_execute_forms", "[mysql][execute]")
 TEST_CASE_METHOD(mysql_fixture, "test_bind_every_form", "[mysql][bind][batch]")
 {
     test_bind_every_form();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_get_every_ctype", "[mysql][result][types]")
+{
+    test_get_every_ctype();
+}
+
+// The unsigned C types the bind switch dispatches on. MySQL is the only backend here whose
+// integer columns can be UNSIGNED, so it is the only one that binds these.
+TEST_CASE_METHOD(mysql_fixture, "test_get_unsigned_ctypes", "[mysql][result][types]")
+{
+    nanodbc::connection connection = connect();
+    create_table(
+        connection,
+        NANODBC_TEXT("test_get_unsigned_ctypes"),
+        NANODBC_TEXT(
+            "(ti tinyint unsigned, si smallint unsigned, i int unsigned, "
+            "bi bigint unsigned)"));
+    execute(
+        connection,
+        NANODBC_TEXT(
+            "insert into test_get_unsigned_ctypes (ti, si, i, bi) "
+            "values (200, 60000, 4000000000, 9000000000000000000);"));
+
+    auto results =
+        execute(connection, NANODBC_TEXT("select ti, si, i, bi from test_get_unsigned_ctypes;"));
+    REQUIRE(results.next());
+    REQUIRE(results.get<unsigned short>(0) == 200);
+    REQUIRE(results.get<int>(0) == 200);
+    REQUIRE(results.get<unsigned int>(1) == 60000);
+    REQUIRE(results.get<long>(1) == 60000);
+    REQUIRE(results.get<unsigned long long>(2) == 4000000000ULL);
+    REQUIRE(results.get<double>(2) == 4000000000.0);
+    REQUIRE(results.get<unsigned long long>(3) == 9000000000000000000ULL);
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_statement_timeout", "[mysql][statement]")
+{
+    test_statement_timeout();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_bind_wide_strings_with_sentry", "[mysql][bind][unicode]")
+{
+    test_bind_wide_strings_with_sentry();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_parameter_metadata_before_description", "[mysql][statement]")
+{
+    test_parameter_metadata_before_description();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_binary_read_shapes", "[mysql][result][binary]")
+{
+    test_binary_read_shapes();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_null_long_text_fallback", "[mysql][result][null]")
+{
+    test_null_long_text_fallback();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_bind_date_to_timestamp_parameter", "[mysql][bind][date]")
+{
+    test_bind_date_to_timestamp_parameter();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_bind_null_in_single_row_batch", "[mysql][bind][null]")
+{
+    test_bind_null_in_single_row_batch();
 }

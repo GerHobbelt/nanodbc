@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- `transaction::commit()` honours the connection's rollback flag, so an inner rollback is no longer discarded by an outer commit. [`#78`](https://github.com/nanodbc/nanodbc/issues/78)
+- A bound character column the driver under-sized is read again in full instead of coming back truncated. [`#343`](https://github.com/nanodbc/nanodbc/issues/343)
+- Tests cover executing a prepared statement repeatedly and binding a batch with an arithmetic null sentry. [`#56`](https://github.com/nanodbc/nanodbc/issues/56) [`#77`](https://github.com/nanodbc/nanodbc/issues/77)
+- Column buffer casts go through `void*` rather than `reinterpret_cast` and a C-style cast, which analysers report as unsafe. [`#420`](https://github.com/nanodbc/nanodbc/issues/420)
+- A null timestamp read after `unbind()` yields the fallback or raises `null_access_error`, where it once aborted. [`#423`](https://github.com/nanodbc/nanodbc/issues/423)
+- `PARAM_RETURN` documents that it binds a procedure's return value at parameter zero of `{ ? = CALL proc(?) }`. [`#355`](https://github.com/nanodbc/nanodbc/issues/355)
+- Documented that non-ASCII text belongs in bound parameters, not statement text, whose encoding a narrow build leaves to the driver. [`#359`](https://github.com/nanodbc/nanodbc/issues/359)
+
+## v2.17.0
+
+- A batch of one can bind NULL. The null indicator was withheld from the driver whenever the batch held a single value. [`#220`](https://github.com/nanodbc/nanodbc/issues/220) [`#347`](https://github.com/nanodbc/nanodbc/issues/347)
+- The last two `__GNUC__` conditions are gone; both were unreachable at C++14, which is the minimum. [`#383`](https://github.com/nanodbc/nanodbc/issues/383)
+- Every integer width renders as a string, where only 32 bits and wider did. [`#467`](https://github.com/nanodbc/nanodbc/issues/467)
+- The tests say `SQLWCHAR` rather than `WCHAR`, which is a Windows type and left the suite unbuildable where the ODBC headers do not supply it. [`#439`](https://github.com/nanodbc/nanodbc/issues/439)
+- `SQLBindParameter` is given the bound type's size as the buffer length rather than the parameter's column size, which is a precision and not a byte count. [`#437`](https://github.com/nanodbc/nanodbc/issues/437)
+- A bound C string is given its own length as the buffer length, rather than the parameter's column size, which counts digits. [`#462`](https://github.com/nanodbc/nanodbc/issues/462)
+- `result::get(column_name, fallback)` no longer aborts on a null unbound column. [`#480`](https://github.com/nanodbc/nanodbc/pull/480)
 - `result_iterator`'s postfix increment returns `void`, so `*it++` is a compile error rather than the row after the one it names; `it++` and `++it` are unaffected.
 - Cleared the remaining code scanning alerts. [`#476`](https://github.com/nanodbc/nanodbc/pull/476)
 - Column buffers are owned by `std::unique_ptr`, and the implementation types are allocated with `std::make_shared`.

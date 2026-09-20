@@ -1177,6 +1177,32 @@ TEST_CASE_METHOD(mssql_fixture, "test_execute_direct_batch_ops", "[mssql][statem
     test_execute_direct_batch_ops();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_string_aggregate", "[mssql][result][string]")
+{
+    test_string_aggregate();
+}
+
+TEST_CASE_METHOD(
+    mssql_fixture,
+    "test_execute_prepared_statement_repeatedly",
+    "[mssql][statement][prepare]")
+{
+    test_execute_prepared_statement_repeatedly();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_bind_arithmetic_null_sentry", "[mssql][bind][null]")
+{
+    test_bind_arithmetic_null_sentry();
+}
+
+TEST_CASE_METHOD(
+    mssql_fixture,
+    "test_nested_transaction_rollback",
+    "[mssql][transaction][rollback]")
+{
+    test_nested_transaction_rollback();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_result_unbind", "[mssql][result][unbind]")
 {
     test_result_unbind();
@@ -2364,4 +2390,321 @@ TEST_CASE_METHOD(mssql_fixture, "test_just_execute_forms", "[mssql][execute]")
 TEST_CASE_METHOD(mssql_fixture, "test_bind_every_form", "[mssql][bind][batch]")
 {
     test_bind_every_form();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_get_every_ctype", "[mssql][result][types]")
+{
+    test_get_every_ctype();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_statement_timeout", "[mssql][statement]")
+{
+    test_statement_timeout();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_bind_wide_strings_with_sentry", "[mssql][bind][unicode]")
+{
+    test_bind_wide_strings_with_sentry();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_parameter_metadata_before_description", "[mssql][statement]")
+{
+    test_parameter_metadata_before_description();
+}
+
+// Each accessor asked first on a table valued parameter of its own, so the description is
+// fetched rather than looked up. parameters() populates it, so a single one per fixture.
+TEST_CASE_METHOD(
+    mssql_table_valued_parameter_fixture,
+    "test_table_valued_parameter_metadata_before_description",
+    "[mssql][table_valued_paramter]")
+{
+    auto conn = connect();
+    {
+        auto stmt = nanodbc::statement(conn);
+        stmt.prepare(NANODBC_TEXT("{ CALL tvp_test(?, ?, ?) }"));
+        auto p1 = nanodbc::table_valued_parameter(stmt, 1, num_rows_);
+        REQUIRE(p1.parameter_size(0) > 0);
+        p1.close();
+    }
+    {
+        auto stmt = nanodbc::statement(conn);
+        stmt.prepare(NANODBC_TEXT("{ CALL tvp_test(?, ?, ?) }"));
+        auto p1 = nanodbc::table_valued_parameter(stmt, 1, num_rows_);
+        p1.parameter_scale(0);
+        p1.close();
+    }
+    {
+        auto stmt = nanodbc::statement(conn);
+        stmt.prepare(NANODBC_TEXT("{ CALL tvp_test(?, ?, ?) }"));
+        auto p1 = nanodbc::table_valued_parameter(stmt, 1, num_rows_);
+        REQUIRE(p1.parameter_type(0) != 0);
+        p1.close();
+    }
+}
+
+// statement::procedure_columns, which asks the driver about one procedure's parameters
+// rather than going through the catalog.
+TEST_CASE_METHOD(mssql_fixture, "test_statement_procedure_columns", "[mssql][statement][catalog]")
+{
+    auto connection = connect();
+    nanodbc::string const name = NANODBC_TEXT("test_statement_procedure_columns_proc");
+    try
+    {
+        execute(connection, NANODBC_TEXT("DROP PROCEDURE ") + name);
+    }
+    catch (...)
+    {
+    }
+    execute(
+        connection,
+        NANODBC_TEXT("CREATE PROCEDURE ") + name +
+            NANODBC_TEXT(
+                " @arg_int INT, @arg_text VARCHAR(20) AS BEGIN SELECT @arg_int AS A END;"));
+
+    nanodbc::statement statement(connection);
+    auto results =
+        statement.procedure_columns(NANODBC_TEXT(""), NANODBC_TEXT(""), name, NANODBC_TEXT("%"));
+
+    int found = 0;
+    while (results.next())
+    {
+        auto const column = results.get<nanodbc::string>(3, NANODBC_TEXT(""));
+        if (column.find(NANODBC_TEXT("arg_int")) != nanodbc::string::npos ||
+            column.find(NANODBC_TEXT("arg_text")) != nanodbc::string::npos)
+            ++found;
+    }
+    REQUIRE(found == 2);
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_binary_read_shapes", "[mssql][result][binary]")
+{
+    test_binary_read_shapes();
+}
+
+// Binding a parameter in a direction other than PARAM_IN, which is what maps onto
+// SQL_PARAM_OUTPUT and SQL_PARAM_INPUT_OUTPUT.
+TEST_CASE_METHOD(mssql_fixture, "test_output_parameters", "[mssql][statement][bind]")
+{
+    auto connection = connect();
+    nanodbc::string const name = NANODBC_TEXT("test_output_parameters_proc");
+    try
+    {
+        execute(connection, NANODBC_TEXT("DROP PROCEDURE ") + name);
+    }
+    catch (...)
+    {
+    }
+    execute(
+        connection,
+        NANODBC_TEXT("CREATE PROCEDURE ") + name +
+            NANODBC_TEXT(
+                " @in INT, @out INT OUTPUT, @inout INT OUTPUT AS "
+                "BEGIN SET @out = @in * 2; SET @inout = @inout + 1; END;"));
+
+    nanodbc::statement statement(connection);
+    statement.prepare(NANODBC_TEXT("{ CALL ") + name + NANODBC_TEXT("(?, ?, ?) }"));
+
+    int const in = 21;
+    int out = 0;
+    int inout = 100;
+    statement.bind(0, &in);
+    statement.bind(1, &out, nanodbc::statement::PARAM_OUT);
+    statement.bind(2, &inout, nanodbc::statement::PARAM_INOUT);
+    statement.just_execute();
+
+    REQUIRE(out == 42);
+    REQUIRE(inout == 101);
+
+    // A return value is bound in a direction of its own, which maps onto the same
+    // SQL_PARAM_OUTPUT.
+    nanodbc::statement returning(connection);
+    returning.prepare(NANODBC_TEXT("{ ? = CALL ") + name + NANODBC_TEXT("(?, ?, ?) }"));
+    int rv = 0;
+    int const in2 = 1;
+    int out2 = 0;
+    int inout2 = 0;
+    returning.bind(0, &rv, nanodbc::statement::PARAM_RETURN);
+    returning.bind(1, &in2);
+    returning.bind(2, &out2, nanodbc::statement::PARAM_OUT);
+    returning.bind(3, &inout2, nanodbc::statement::PARAM_INOUT);
+    returning.just_execute();
+    REQUIRE(out2 == 2);
+}
+
+// A procedure's RETURN value is not an output parameter; it is bound at position zero
+// of a "{ ? = CALL ... }" escape sequence with PARAM_RETURN.
+TEST_CASE_METHOD(mssql_fixture, "test_procedure_return_value", "[mssql][statement][bind]")
+{
+    auto connection = connect();
+    nanodbc::string const name = NANODBC_TEXT("test_procedure_return_value_proc");
+    try
+    {
+        execute(connection, NANODBC_TEXT("DROP PROCEDURE ") + name);
+    }
+    catch (...)
+    {
+    }
+    execute(
+        connection,
+        NANODBC_TEXT("CREATE PROCEDURE ") + name +
+            NANODBC_TEXT(" @in INT AS BEGIN RETURN @in * 3; END;"));
+
+    nanodbc::statement statement(connection);
+    statement.prepare(NANODBC_TEXT("{ ? = CALL ") + name + NANODBC_TEXT("(?) }"));
+
+    int rv = 0;
+    int const in = 14;
+    statement.bind(0, &rv, nanodbc::statement::PARAM_RETURN);
+    statement.bind(1, &in);
+    statement.just_execute();
+
+    REQUIRE(rv == 42);
+}
+
+// A character outside the basic multilingual plane is a surrogate pair in UTF-16, so
+// reading one and binding it back tests that both paths carry the pair intact. The
+// value is built by the server, keeping non-ASCII out of this file and out of the
+// query text, whose encoding in a narrow build is the driver's to decide.
+TEST_CASE_METHOD(mssql_fixture, "test_non_bmp_round_trip", "[mssql][unicode][bind]")
+{
+    auto connection = connect();
+    create_table(
+        connection,
+        NANODBC_TEXT("test_non_bmp_round_trip"),
+        NANODBC_TEXT("(id int, v nvarchar(50))"));
+    execute(
+        connection,
+        NANODBC_TEXT(
+            "insert into test_non_bmp_round_trip (id, v) values "
+            "(1, NCHAR(0xD83D) + NCHAR(0xDE00));"));
+
+    nanodbc::string read_back;
+    {
+        auto results = execute(
+            connection,
+            NANODBC_TEXT("select v, datalength(v) from test_non_bmp_round_trip where id = 1;"));
+        REQUIRE(results.next());
+        read_back = results.get<nanodbc::string>(0);
+        REQUIRE(results.get<int>(1) == 4); // two UTF-16 code units
+    }
+
+    // Binding the value back returns it intact only in a Unicode build. A narrow build
+    // hands the driver bytes in the client character set, which need not represent a
+    // character outside the basic multilingual plane at all.
+#ifdef NANODBC_ENABLE_UNICODE
+    {
+        nanodbc::statement statement(connection);
+        statement.prepare(
+            NANODBC_TEXT("insert into test_non_bmp_round_trip (id, v) values (2, ?);"));
+        statement.bind(0, read_back.c_str());
+        statement.just_execute();
+    }
+
+    auto results = execute(
+        connection,
+        NANODBC_TEXT(
+            "select datalength(v), cast(case when v = (select v from "
+            "test_non_bmp_round_trip where id = 1) then 1 else 0 end as int) "
+            "from test_non_bmp_round_trip where id = 2;"));
+    REQUIRE(results.next());
+    REQUIRE(results.get<int>(0) == 4);
+    REQUIRE(results.get<int>(1) == 1);
+#else
+    REQUIRE(!read_back.empty());
+#endif
+}
+
+// An NVARCHAR column is bound wide, so reading one as a character takes the wide arm of
+// the string column path.
+TEST_CASE_METHOD(mssql_fixture, "test_wide_bound_column_as_character", "[mssql][result][unicode]")
+{
+    auto connection = connect();
+    create_table(
+        connection,
+        NANODBC_TEXT("test_wide_bound_column_as_character"),
+        NANODBC_TEXT("(s nvarchar(10))"));
+    execute(
+        connection,
+        NANODBC_TEXT("insert into test_wide_bound_column_as_character (s) values (N'9');"));
+
+    auto results =
+        execute(connection, NANODBC_TEXT("select s from test_wide_bound_column_as_character;"));
+    REQUIRE(results.next());
+    REQUIRE(results.get<char>(0) == '9');
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_null_long_text_fallback", "[mssql][result][null]")
+{
+    test_null_long_text_fallback();
+}
+
+// A column whose SQL type the binding switch does not name falls to its default arm, which
+// binds it as text. uniqueidentifier is one such.
+TEST_CASE_METHOD(mssql_fixture, "test_bind_unnamed_sql_type", "[mssql][result][types]")
+{
+    auto connection = connect();
+    create_table(
+        connection,
+        NANODBC_TEXT("test_bind_unnamed_sql_type"),
+        NANODBC_TEXT("(g uniqueidentifier)"));
+    execute(
+        connection,
+        NANODBC_TEXT(
+            "insert into test_bind_unnamed_sql_type (g) values "
+            "('6F9619FF-8B86-D011-B42D-00C04FC964FF');"));
+
+    auto results = execute(connection, NANODBC_TEXT("select g from test_bind_unnamed_sql_type;"));
+    REQUIRE(results.next());
+    REQUIRE(!results.get<nanodbc::string>(0).empty());
+}
+
+// The two ways a table valued parameter column can be told which of its values are null: a
+// sentry for the numeric columns, and a flag per value for the binary one.
+TEST_CASE_METHOD(
+    mssql_table_valued_parameter_fixture,
+    "test_table_valued_parameter_null_marking",
+    "[mssql][table_valued_paramter]")
+{
+    auto conn = connect();
+    auto stmt = nanodbc::statement(conn);
+    stmt.prepare(NANODBC_TEXT("{ CALL tvp_test(?, ?, ?) }"));
+    stmt.bind(0, &p0_);
+
+    // A flag set marks that value null; the rest are given their length.
+    std::vector<char> nulls(static_cast<std::size_t>(num_rows_), 0);
+    nulls[0] = 1;
+
+    auto p1 = nanodbc::table_valued_parameter(stmt, 1, num_rows_);
+    p1.bind(0, p1_col0_.data(), p1_col0_.size());
+    // The first value as its own sentry, so that row's col1 arrives null.
+    p1.bind(1, p1_col1_.data(), p1_col1_.size(), &p1_col1_.front());
+    p1.bind_strings(2, p1_col2_);
+    p1.bind_strings(3, p1_col3_);
+    p1.bind(4, p1_col4_, reinterpret_cast<bool const*>(nulls.data()));
+    p1.close();
+    stmt.bind(2, p2_.c_str());
+
+    auto results = stmt.execute();
+    int sentry_nulls = 0;
+    int flagged_nulls = 0;
+    while (results.next())
+    {
+        if (results.is_null(2))
+            ++sentry_nulls;
+        if (results.is_null(5))
+            ++flagged_nulls;
+    }
+    REQUIRE(sentry_nulls == 1);
+    REQUIRE(flagged_nulls == 1);
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_bind_date_to_timestamp_parameter", "[mssql][bind][date]")
+{
+    test_bind_date_to_timestamp_parameter();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_bind_null_in_single_row_batch", "[mssql][bind][null]")
+{
+    test_bind_null_in_single_row_batch();
 }

@@ -239,19 +239,8 @@ typedef unspecified - type null_type;
 #endif
 
 /// \def NANODBC_DEPRECATED
-/// \brief Marks a declaration as deprecated, in whichever way the compiler supports.
-#if __cplusplus >= 201402L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201402L)
-// [[deprecated]] is only available in C++14
+/// \brief Marks a declaration as deprecated.
 #define NANODBC_DEPRECATED [[deprecated]]
-#else
-#ifdef __GNUC__
-#define NANODBC_DEPRECATED __attribute__((deprecated))
-#elif defined(_MSC_VER)
-#define NANODBC_DEPRECATED __declspec(deprecated)
-#else
-#define NANODBC_DEPRECATED
-#endif
-#endif
 
 // forward declare
 #ifndef NANODBC_DISABLE_MSSQL_TVP
@@ -918,7 +907,8 @@ public:
         PARAM_IN,    ///< Binding an input parameter.
         PARAM_OUT,   ///< Binding an output parameter.
         PARAM_INOUT, ///< Binding an input/output parameter.
-        PARAM_RETURN ///< Binding a return parameter.
+        PARAM_RETURN ///< Binding a procedure's return value, at parameter zero of a
+                     ///< `{ ? = CALL proc(?) }` escape sequence.
     };
 
 public:
