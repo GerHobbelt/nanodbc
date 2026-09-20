@@ -156,6 +156,16 @@ TEST_CASE_METHOD(mysql_fixture, "test_batch_insert_mixed", "[mysql][batch]")
     test_batch_insert_mixed();
 }
 
+TEST_CASE_METHOD(mysql_fixture, "test_bind_rows", "[mysql][batch][bind_rows]")
+{
+    test_bind_rows();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_bind_rows_null", "[mysql][batch][bind_rows]")
+{
+    test_bind_rows_null();
+}
+
 TEST_CASE_METHOD(mysql_fixture, "test_std_optional", "[mysql][optional]")
 {
     test_std_optional();
@@ -221,6 +231,11 @@ TEST_CASE_METHOD(mysql_fixture, "test_connection_environment", "[mysql][connecti
     test_connection_environment();
 }
 
+TEST_CASE_METHOD(mysql_fixture, "test_connection_attributes", "[mysql][connection][attributes]")
+{
+    test_connection_attributes();
+}
+
 TEST_CASE_METHOD(mysql_fixture, "test_dbms_info", "[mysql][dmbs][metadata][info]")
 {
     test_dbms_info();
@@ -239,6 +254,11 @@ TEST_CASE_METHOD(mysql_fixture, "test_decimal_conversion", "[mysql][decimal][con
 TEST_CASE_METHOD(mysql_fixture, "test_error", "[mysql][error]")
 {
     test_error();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_error_message_carries_each_diagnostic_once", "[mysql][error]")
+{
+    test_error_message_carries_each_diagnostic_once();
 }
 
 TEST_CASE_METHOD(mysql_fixture, "test_exception", "[mysql][exception]")
@@ -368,6 +388,11 @@ TEST_CASE_METHOD(mysql_fixture, "test_statement_open_close", "[mysql][statement]
     test_statement_open_close();
 }
 
+TEST_CASE_METHOD(mysql_fixture, "test_affected_rows_counts", "[mysql][statement][affected_rows]")
+{
+    test_affected_rows_counts();
+}
+
 TEST_CASE_METHOD(mysql_fixture, "test_boolean_column", "[mysql][boolean]")
 {
     test_boolean_column();
@@ -401,6 +426,11 @@ TEST_CASE_METHOD(mysql_fixture, "test_statement_parameter_description", "[mysql]
 TEST_CASE_METHOD(mysql_fixture, "test_result_rowset_navigation", "[mysql][result][rowset]")
 {
     test_result_rowset_navigation();
+}
+
+TEST_CASE_METHOD(mysql_fixture, "test_scrollable_cursor", "[mysql][result][cursor][scroll]")
+{
+    test_scrollable_cursor();
 }
 
 TEST_CASE_METHOD(mysql_fixture, "test_execute_direct_batch_ops", "[mysql][statement][batch]")

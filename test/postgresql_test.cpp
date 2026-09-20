@@ -94,6 +94,16 @@ TEST_CASE_METHOD(postgresql_fixture, "test_batch_insert_mixed", "[postgresql][ba
     test_batch_insert_mixed();
 }
 
+TEST_CASE_METHOD(postgresql_fixture, "test_bind_rows", "[postgresql][batch][bind_rows]")
+{
+    test_bind_rows();
+}
+
+TEST_CASE_METHOD(postgresql_fixture, "test_bind_rows_null", "[postgresql][batch][bind_rows]")
+{
+    test_bind_rows_null();
+}
+
 TEST_CASE_METHOD(postgresql_fixture, "test_std_optional", "[postgresql][optional]")
 {
     test_std_optional();
@@ -156,6 +166,14 @@ TEST_CASE_METHOD(postgresql_fixture, "test_connection_environment", "[postgresql
     test_connection_environment();
 }
 
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_connection_attributes",
+    "[postgresql][connection][attributes]")
+{
+    test_connection_attributes();
+}
+
 TEST_CASE_METHOD(postgresql_fixture, "test_dbms_info", "[postgresql][dmbs][metadata][info]")
 {
     test_dbms_info();
@@ -174,6 +192,14 @@ TEST_CASE_METHOD(postgresql_fixture, "test_decimal_conversion", "[postgresql][de
 TEST_CASE_METHOD(postgresql_fixture, "test_error", "[postgresql][error]")
 {
     test_error();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_error_message_carries_each_diagnostic_once",
+    "[postgresql][error]")
+{
+    test_error_message_carries_each_diagnostic_once();
 }
 
 TEST_CASE_METHOD(postgresql_fixture, "test_exception", "[postgresql][exception]")
@@ -309,6 +335,14 @@ TEST_CASE_METHOD(postgresql_fixture, "test_statement_open_close", "[postgresql][
     test_statement_open_close();
 }
 
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_affected_rows_counts",
+    "[postgresql][statement][affected_rows]")
+{
+    test_affected_rows_counts();
+}
+
 TEST_CASE_METHOD(postgresql_fixture, "test_boolean_column", "[postgresql][boolean]")
 {
     test_boolean_column();
@@ -348,6 +382,14 @@ TEST_CASE_METHOD(
     "[postgresql][result][rowset]")
 {
     test_result_rowset_navigation();
+}
+
+TEST_CASE_METHOD(
+    postgresql_fixture,
+    "test_scrollable_cursor",
+    "[postgresql][result][cursor][scroll]")
+{
+    test_scrollable_cursor();
 }
 
 TEST_CASE_METHOD(

@@ -137,6 +137,16 @@ TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_mixed", "[sqlite][batch]")
     test_batch_insert_mixed();
 }
 
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_rows", "[sqlite][batch][bind_rows]")
+{
+    test_bind_rows();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_bind_rows_null", "[sqlite][batch][bind_rows]")
+{
+    test_bind_rows_null();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_string", "[sqlite][batch][string]")
 {
     test_batch_insert_string();
@@ -230,6 +240,11 @@ TEST_CASE_METHOD(sqlite_fixture, "test_connection_environment", "[sqlite][connec
     test_connection_environment();
 }
 
+TEST_CASE_METHOD(sqlite_fixture, "test_connection_attributes", "[sqlite][connection][attributes]")
+{
+    test_connection_attributes();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_date", "[sqlite][date]")
 {
     test_date();
@@ -283,6 +298,14 @@ TEST_CASE_METHOD(sqlite_fixture, "test_decimal_conversion", "[sqlite][decimal][c
 TEST_CASE_METHOD(sqlite_fixture, "test_error", "[sqlite][error]")
 {
     test_error();
+}
+
+TEST_CASE_METHOD(
+    sqlite_fixture,
+    "test_error_message_carries_each_diagnostic_once",
+    "[sqlite][error]")
+{
+    test_error_message_carries_each_diagnostic_once();
 }
 
 TEST_CASE_METHOD(sqlite_fixture, "test_exception", "[sqlite][exception]")
@@ -441,6 +464,11 @@ TEST_CASE_METHOD(sqlite_fixture, "test_statement_open_close", "[sqlite][statemen
     test_statement_open_close();
 }
 
+TEST_CASE_METHOD(sqlite_fixture, "test_affected_rows_counts", "[sqlite][statement][affected_rows]")
+{
+    test_affected_rows_counts();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_bind_null_array", "[sqlite][null]")
 {
     test_bind_null_array();
@@ -469,6 +497,11 @@ TEST_CASE_METHOD(sqlite_fixture, "test_statement_parameter_description", "[sqlit
 TEST_CASE_METHOD(sqlite_fixture, "test_result_rowset_navigation", "[sqlite][result][rowset]")
 {
     test_result_rowset_navigation();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_scrollable_cursor", "[sqlite][result][cursor][scroll]")
+{
+    test_scrollable_cursor();
 }
 
 TEST_CASE_METHOD(sqlite_fixture, "test_execute_direct_batch_ops", "[sqlite][statement][batch]")

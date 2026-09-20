@@ -249,6 +249,16 @@ TEST_CASE_METHOD(mssql_fixture, "test_batch_insert_mixed", "[mssql][batch]")
     test_batch_insert_mixed();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_bind_rows", "[mssql][batch][bind_rows]")
+{
+    test_bind_rows();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_bind_rows_null", "[mssql][batch][bind_rows]")
+{
+    test_bind_rows_null();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_std_optional", "[mssql][optional]")
 {
     test_std_optional();
@@ -580,13 +590,11 @@ TEST_CASE_METHOD(
             "in the table in bound col', 'this is the longest text of the three texts in "
             "the table in unbound col');"));
 
-#ifdef NANODBC_HAS_STD_VARIANT
+    // A scrollable cursor, asked for by statement attribute. The value is an integer, so
+    // this reads the same whether or not std::variant is available.
     std::list<nanodbc::statement::attribute> attributes;
     attributes.push_back({SQL_ATTR_CURSOR_TYPE, 0, (std::uintptr_t)SQL_CURSOR_STATIC});
     nanodbc::statement stmt(conn, attributes);
-#else
-    nanodbc::statement stmt(conn);
-#endif
     nanodbc::batch_ops array_sizes;
     array_sizes.rowset_size = rowset_size;
     nanodbc::result results = stmt.execute_direct(
@@ -933,6 +941,11 @@ TEST_CASE_METHOD(mssql_fixture, "test_connection_environment", "[mssql][connecti
     test_connection_environment();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_connection_attributes", "[mssql][connection][attributes]")
+{
+    test_connection_attributes();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_dbms_info", "[mssql][dmbs][metadata][info]")
 {
     test_dbms_info();
@@ -951,6 +964,11 @@ TEST_CASE_METHOD(mssql_fixture, "test_decimal_conversion", "[mssql][decimal][con
 TEST_CASE_METHOD(mssql_fixture, "test_error", "[mssql][error]")
 {
     test_error();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_error_message_carries_each_diagnostic_once", "[mssql][error]")
+{
+    test_error_message_carries_each_diagnostic_once();
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_exception", "[mssql][exception]")
@@ -1191,6 +1209,11 @@ TEST_CASE_METHOD(mssql_fixture, "test_statement_open_close", "[mssql][statement]
     test_statement_open_close();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_affected_rows_counts", "[mssql][statement][affected_rows]")
+{
+    test_affected_rows_counts();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_boolean_column", "[mssql][boolean]")
 {
     test_boolean_column();
@@ -1224,6 +1247,11 @@ TEST_CASE_METHOD(mssql_fixture, "test_statement_parameter_description", "[mssql]
 TEST_CASE_METHOD(mssql_fixture, "test_result_rowset_navigation", "[mssql][result][rowset]")
 {
     test_result_rowset_navigation();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_scrollable_cursor", "[mssql][result][cursor][scroll]")
+{
+    test_scrollable_cursor();
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_execute_direct_batch_ops", "[mssql][statement][batch]")

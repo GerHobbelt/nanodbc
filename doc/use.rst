@@ -148,6 +148,154 @@ Where a driver walks them, a single statement carrying many rows is faster than 
 None of this applies to a database in the same process. SQLite has no round trip to save and shows no difference between the two.
 
 ******************************************************************************
+Binding a batch held as rows
+******************************************************************************
+
+Parameters are bound a column at a time, an array to each marker, which is the shape the drivers take. Data usually arrives as rows instead, a struct to each, and turning one into the other means a vector per column and a loop to fill them.
+
+``bind_rows`` does that. Each accessor names one parameter, in the order the markers appear, either as a pointer to a member or as anything callable with a row:
+
+.. code-block:: cpp
+
+    #include <nanodbc/nanodbc.h>
+    #include <vector>
+
+    struct person
+    {
+        long id;
+        nanodbc::string name;
+    };
+
+    int main()
+    {
+        nanodbc::connection conn(NANODBC_TEXT("dsn"));
+        std::vector<person> people{{1, NANODBC_TEXT("Ada")}, {2, NANODBC_TEXT("Grace")}};
+
+        nanodbc::statement stmt(conn);
+        prepare(stmt, NANODBC_TEXT("insert into people (id, name) values (?, ?)"));
+        bind_rows(stmt, people, &person::id, &person::name);
+        execute(stmt, people.size());
+    }
+
+The values are copied into the statement, so the rows are free to go out of scope before it runs. The overloads of ``bind`` taking a pointer bind the caller's buffer instead, which has to stay alive and unchanged until execution.
+
+Built as C++17 or later, an accessor yielding ``std::optional`` binds an absent value as null, which is how a nullable column is filled from a row that has no value for it.
+
+What reaches the driver is a parameter array either way, so this is the same batch described above, and the same limits apply to how far it carries.
+
+******************************************************************************
+Reading a result other than forwards
+******************************************************************************
+
+``next()`` works on any result. ``first()``, ``last()``, ``prior()``, ``move()`` and ``skip()`` ask the driver to fetch somewhere other than the next row, and a cursor has to be able to scroll for that. ODBC does not give one by default, so the calls fail:
+
+.. code-block:: text
+
+    HY106: [Microsoft][ODBC Driver 18 for SQL Server]Fetch type out of range
+
+``position()`` reporting zero comes from the same place.
+
+The cursor type is a statement attribute, set before the statement runs:
+
+.. code-block:: cpp
+
+    #include <nanodbc/nanodbc.h>
+    #include <cstdint>
+    #include <list>
+    #include <sql.h>
+    #include <sqlext.h>
+
+    int main()
+    {
+        nanodbc::connection conn(NANODBC_TEXT("dsn"));
+
+        std::list<nanodbc::statement::attribute> attributes;
+        attributes.push_back({SQL_ATTR_CURSOR_TYPE, 0, (std::uintptr_t)SQL_CURSOR_STATIC});
+
+        nanodbc::statement stmt(conn, attributes);
+        prepare(stmt, NANODBC_TEXT("select i from t order by i asc"));
+        auto results = execute(stmt);
+
+        results.last();
+        results.prior();
+        results.first();
+        results.move(2);  // absolute, counted from one
+    }
+
+``SQL_CURSOR_STATIC`` takes a snapshot of the rows and scrolls over it. ``SQL_CURSOR_DYNAMIC`` and ``SQL_CURSOR_KEYSET_DRIVEN`` scroll as well and see later changes to differing degrees, at a cost the driver decides. A scrolling cursor is dearer than the forward only one, which is why it is not what you get without asking.
+
+SQL Server, PostgreSQL, MySQL, SQLite and Oracle all honour ``SQL_CURSOR_STATIC`` through their ODBC drivers. A driver that cannot give the cursor asked for is free to substitute another and say so through ``SQLGetDiagRec`` rather than to fail, so a result that still will not scroll is worth checking the diagnostics for.
+
+******************************************************************************
+Reading many rows into containers
+******************************************************************************
+
+Results are read a row at a time, and there is no binding of output buffers to read a column straight into a container. What makes a read bulk is the rowset: ``execute`` takes the number of rows to fetch per round trip, and the driver fills that many at once while ``next()`` walks what it fetched.
+
+``get_ref`` reads a column into a variable already to hand rather than returning a new one, which keeps a string's buffer in play across the loop instead of allocating one per row:
+
+.. code-block:: cpp
+
+    #include <nanodbc/nanodbc.h>
+    #include <string>
+    #include <vector>
+
+    int main()
+    {
+        nanodbc::connection conn(NANODBC_TEXT("dsn"));
+
+        // A thousand rows per round trip rather than one.
+        auto results = execute(conn, NANODBC_TEXT("select a, b from t"), 1000);
+
+        std::vector<nanodbc::string> a, b;
+        nanodbc::string value;
+        while (results.next())
+        {
+            results.get_ref(0, value);
+            a.push_back(value);
+
+            results.get_ref(1, value);
+            b.push_back(value);
+        }
+    }
+
+Reserving on the vectors is worth it where the row count is known or can be estimated, since the loop otherwise grows them as it goes.
+
+The rowset size is what to vary if the read is slow. Its effect is the same as the one batch parameters have, described above: the round trip is what costs, and fetching a thousand rows in one is far cheaper than a thousand round trips. Sizes beyond a few thousand rarely pay for the memory they take, since the rowset is held in full.
+
+``batch_ops`` sets the rowset size where a statement also carries parameters, so that the two are chosen separately.
+
+******************************************************************************
+Setting connection attributes
+******************************************************************************
+
+Some ODBC connection attributes govern how the connection is made, so they have to reach the driver before it connects rather than after. The constructors and ``connect()`` overloads taking a list of attributes set them on the handle between allocating it and connecting with it:
+
+.. code-block:: cpp
+
+    #include <nanodbc/nanodbc.h>
+    #include <cstdint>
+    #include <list>
+    #include <sql.h>
+    #include <sqlext.h>
+
+    int main()
+    {
+        std::list<nanodbc::connection::attribute> attributes;
+        attributes.push_back({SQL_ATTR_LOGIN_TIMEOUT, SQL_IS_UINTEGER, (std::uintptr_t)30});
+
+        nanodbc::connection conn(NANODBC_TEXT("dsn"), attributes);
+
+        // or, on a connection that has not connected yet
+        nanodbc::connection other;
+        other.connect(NANODBC_TEXT("dsn"), attributes);
+    }
+
+Allocating a connection and setting attributes on it by hand before calling ``connect()`` does not work, and is not meant to: ``connect()`` frees the handle it is given and allocates another, so anything set on the old one goes with it. The overloads above are how the ordering is expressed.
+
+Where the library is built as C++17 or later, an attribute's value may also be a string or a binary buffer, which it holds for as long as the attribute lives. Below that the value is a ``std::uintptr_t``, which covers the integer attributes.
+
+******************************************************************************
 Examples
 ******************************************************************************
 

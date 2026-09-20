@@ -580,6 +580,10 @@ recent_error(SQLHANDLE handle, SQLSMALLINT handle_type, long& native, std::strin
     SQLINTEGER native_error = 0;
     SQLSMALLINT total_bytes = 0;
     NANODBC_SQLCHAR sql_state[6] = {0};
+    // ODBC orders the records with the most relevant first, so the state and the native
+    // code are taken from that one however many follow it.
+    NANODBC_SQLCHAR first_sql_state[6] = {0};
+    SQLINTEGER first_native_error = 0;
     RETCODE rc = SQL_SUCCESS;
 
     do
@@ -620,32 +624,42 @@ recent_error(SQLHANDLE handle, SQLSMALLINT handle_type, long& native, std::strin
             return rvalue;
         }
 
-        if (!result.empty())
-            result += ' ';
+        if (i == 1)
+        {
+            std::copy(std::begin(sql_state), std::end(sql_state), std::begin(first_sql_state));
+            first_native_error = native_error;
+        }
 
-        result += nanodbc::string(sql_message.begin(), sql_message.end());
+        // The driver says how long the text is, and the buffer behind it is longer than
+        // that. Appending the whole buffer carries its unused tail into the message,
+        // which later becomes a run of spaces where the zeroes were. A record with no
+        // text contributes nothing at all, not even a separator.
+        auto const text_length =
+            std::min<std::size_t>(static_cast<std::size_t>(total_bytes), sql_message.size());
+        if (text_length > 0)
+        {
+            if (!result.empty())
+                result += ' ';
+
+            result += nanodbc::string(
+                sql_message.begin(),
+                sql_message.begin() + static_cast<std::ptrdiff_t>(text_length));
+        }
         i++;
-
-// NOTE: unixODBC using PostgreSQL and SQLite drivers crash if you call SQLGetDiagRec()
-// more than once. So as a (terrible but the best possible) workaround just exit
-// this loop early on non-Windows systems.
-#ifndef _MSC_VER
-        break;
-#endif
     } while (rc != SQL_NO_DATA);
 
     convert(std::move(result), rvalue);
-    if (size(sql_state) > 0)
+    if (size(first_sql_state) > 0)
     {
         state.clear();
-        state.reserve(size(sql_state));
-        for (std::size_t idx = 0; idx != size(sql_state); ++idx)
+        state.reserve(size(first_sql_state));
+        for (std::size_t idx = 0; idx != size(first_sql_state); ++idx)
         {
-            state.push_back(static_cast<char>(sql_state[idx]));
+            state.push_back(static_cast<char>(first_sql_state[idx]));
         }
     }
 
-    native = native_error;
+    native = first_native_error;
     std::string status = state;
     status += ": ";
     status += rvalue;
@@ -942,6 +956,7 @@ public:
         , cbdata_(nullptr)
         , pdata_(nullptr)
         , bound_(false)
+        , cached_(false)
     {
     }
 
@@ -952,6 +967,8 @@ public:
     {
         for (std::size_t i = 0; i < count; ++i)
             cbdata_[i] = 0;
+        cache_.clear();
+        cached_ = false;
     }
 
 public:
@@ -966,6 +983,10 @@ public:
     std::unique_ptr<nanodbc::null_type[]> cbdata_;
     std::unique_ptr<char[]> pdata_;
     bool bound_;
+    // An unbound column read ahead of time, because asking whether it is null costs the
+    // only reading of it there is. Emptied when the row moves.
+    std::vector<std::uint8_t> cache_;
+    bool cached_;
 };
 
 // Renders value as decimal digits, zero padded to at least width, keeping a minus sign in
@@ -1279,7 +1300,6 @@ public:
         }
     }
 
-#ifdef NANODBC_HAS_STD_VARIANT
     connection_impl(
         string const& dsn,
         string const& user,
@@ -1322,7 +1342,6 @@ public:
             throw;
         }
     }
-#endif
 
     ~connection_impl() noexcept
     {
@@ -2645,6 +2664,14 @@ public:
         bool const* nulls = nullptr,
         T const* null_sentry = nullptr);
 
+    // takes a copy of the values, so that the caller's vector need not outlive the bind
+    template <class T>
+    void bind_vector(
+        param_direction direction,
+        short param_index,
+        std::vector<T> const& values,
+        bool const* nulls = nullptr);
+
     // handles multiple binary values
     void bind(
         param_direction direction,
@@ -2810,6 +2837,10 @@ private:
     std::map<short, std::vector<wide_string::value_type>> wide_string_data_;
     std::map<short, std::vector<std::string::value_type>> string_data_;
     std::map<short, std::vector<uint8_t>> binary_data_;
+    // Values the statement holds on behalf of a caller who bound a vector, kept as bytes
+    // because one statement's parameters are of no single type. ODBC reads a bound buffer
+    // when the statement executes, so these have to outlive the bind.
+    std::map<short, std::vector<uint8_t>> value_data_;
     std::map<short, bound_parameter> param_descr_data_;
 
 #if defined(NANODBC_DO_ASYNC_IMPL)
@@ -2862,6 +2893,24 @@ void statement::statement_impl::bind(
 
     bound_buffer<T> buffer(values, batch_size);
     bind_parameter(param, buffer);
+}
+
+template <class T>
+void statement::statement_impl::bind_vector(
+    param_direction direction,
+    short param_index,
+    std::vector<T> const& values,
+    bool const* nulls)
+{
+    // The values move to where the statement can keep them, the caller's vector being
+    // under no obligation to outlive the bind. Binding a parameter again replaces
+    // whatever was held for it.
+    auto& owned = value_data_[param_index];
+    owned.resize(values.size() * sizeof(T));
+    if (!values.empty())
+        std::memcpy(owned.data(), values.data(), owned.size());
+
+    bind(direction, param_index, reinterpret_cast<T const*>(owned.data()), values.size(), nulls);
 }
 
 template <class T, typename>
@@ -3950,31 +3999,65 @@ public:
         if (rowset_position_ >= rows())
             throw index_range_error();
 
-        // An unbound column carries no indicator from the fetch, so ask the driver. Only
-        // binary can be asked: a zero buffer length reports the length and moves no data.
-        // The others cannot, and report what the fetch knew.
-        if (!col.bound_ && col.ctype_ == SQL_C_BINARY)
+        // An unbound column carries no indicator from the fetch, so the driver has to be
+        // asked. Asking costs the only reading of the column there is: a driver hands
+        // over a character or binary value once, and a zero length SQLGetData counts as
+        // part of that handing over on some of them, Oracle's among them, which then
+        // returns the rest of the value to whoever reads next. So the value is read here
+        // in full and kept for that reader.
+        if (!col.bound_ && col.ctype_ == SQL_C_BINARY && !col.cached_)
+            read_binary_into_cache(column);
+
+        return col.cbdata_[static_cast<size_t>(rowset_position_)] == SQL_NULL_DATA;
+    }
+
+    // Reads an unbound binary column in full, recording its length as the indicator the
+    // fetch did not leave. A driver that declines leaves the question to what the fetch
+    // knew, and nothing is cached.
+    void read_binary_into_cache(short column) const
+    {
+        bound_column& col = bound_columns_[column];
+        std::vector<std::uint8_t> out;
+        std::uint8_t buffer[1024] = {0};
+        SQLLEN indicator = 0;
+        RETCODE rc = SQL_SUCCESS;
+        bool answered = false;
+
+        do
         {
-            SQLCHAR unused = 0;
-            constexpr SQLLEN buffer_length = 0;
-            SQLLEN indicator = 0;
-            RETCODE rc = SQL_SUCCESS;
             NANODBC_CALL_RC(
                 SQLGetData,
                 rc,
                 stmt_.native_statement_handle(),       // StatementHandle
                 static_cast<SQLUSMALLINT>(column + 1), // Col_or_Param_Num
-                col.ctype_,                            // TargetType
-                &unused,                               // TargetValuePtr
-                buffer_length,                         // BufferLength
+                SQL_C_BINARY,                          // TargetType
+                buffer,                                // TargetValuePtr
+                sizeof(buffer),                        // BufferLength
                 &indicator);                           // StrLen_or_IndPtr
-            // A driver that declines leaves the question to what the fetch knew.
-            if (rc == SQL_SUCCESS || rc == SQL_SUCCESS_WITH_INFO)
-                col.cbdata_[static_cast<size_t>(rowset_position_)] =
-                    static_cast<null_type>(indicator);
-        }
+            if (rc != SQL_SUCCESS && rc != SQL_SUCCESS_WITH_INFO)
+                break;
+            answered = true;
+            if (indicator == SQL_NULL_DATA)
+            {
+                col.cbdata_[static_cast<std::size_t>(rowset_position_)] =
+                    static_cast<null_type>(SQL_NULL_DATA);
+                col.cached_ = true;
+                return;
+            }
+            auto const filled =
+                indicator == SQL_NO_TOTAL
+                    ? sizeof(buffer)
+                    : std::min<std::size_t>(static_cast<std::size_t>(indicator), sizeof(buffer));
+            out.insert(out.end(), buffer, buffer + filled);
+        } while (rc == SQL_SUCCESS_WITH_INFO);
 
-        return col.cbdata_[static_cast<size_t>(rowset_position_)] == SQL_NULL_DATA;
+        if (!answered)
+            return;
+
+        col.cbdata_[static_cast<std::size_t>(rowset_position_)] =
+            static_cast<null_type>(out.size());
+        col.cache_ = std::move(out);
+        col.cached_ = true;
     }
 
     bool is_null(string const& column_name) const
@@ -4197,6 +4280,10 @@ public:
             opt_reset(result);
             return;
         }
+        // The value has to exist before it can be read into. An optional holding nothing
+        // has storage for one but has not built it, and writing into what is not there is
+        // undefined however well it may appear to work for a type that is trivial.
+        result.emplace();
         get_ref_impl<std::remove_reference_t<decltype(*result)>>(column, *result);
 
         // An unbound column's null is only known once SQLGetData has run.
@@ -4255,6 +4342,8 @@ public:
             opt_reset(result);
             return;
         }
+        // As above: the value is built before it is read into.
+        result.emplace();
         get_ref_impl<std::remove_reference_t<decltype(*result)>>(column, *result);
 
         // An unbound column's null is only known once SQLGetData has run.
@@ -4854,6 +4943,18 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
         if (!is_bound(column) ||
             (bound_column_was_truncated(column) && supports_get_data_on_bound_column()))
         {
+            // A binary column read to answer whether it was null was read in full, the
+            // driver handing such a value over once, so the answer is served from what
+            // that read kept rather than asked for again.
+            if (col.cached_)
+            {
+                convert(
+                    std::string(
+                        reinterpret_cast<char const*>(col.cache_.data()), col.cache_.size()),
+                    result);
+                return;
+            }
+
             // Input is always std::string, while output may be std::string or wide_string
             std::string out;
             // Data still available, which shrinks with each SQLGetData; not the amount
@@ -4977,9 +5078,14 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
         return;
     }
 
+    // A bit is 0 or 1 by definition, whatever a driver puts in the byte. Oracle's writes
+    // the character rather than the value, and 49 is not what was stored.
+    case SQL_C_BIT:
+        convert(std::string(*ensure_pdata<int8_t>(column) != 0 ? "1" : "0"), result);
+        return;
+
     // std::to_string renders each as the SQL type demands: "%d" and "%lld" for integers,
     // "%f" for floating point, whose column scale is undefined.
-    case SQL_C_BIT:
     case SQL_C_TINYINT:
     case SQL_C_STINYINT:
         convert(std::to_string(*ensure_pdata<int8_t>(column)), result);
@@ -5123,6 +5229,14 @@ inline void result::result_impl::get_ref_impl<std::vector<std::uint8_t>>(
     {
         if (!is_bound(column))
         {
+            // Asking whether the column was null had to read it, the driver handing a
+            // binary value over once, so the answer is served from what that read kept.
+            if (col.cached_)
+            {
+                result = col.cache_;
+                return;
+            }
+
             // Input and output is always array of bytes.
             std::vector<std::uint8_t> out;
             std::uint8_t buffer[1024] = {0};
@@ -5402,6 +5516,14 @@ auto from_string(std::string const& s, unsigned long long)
     return std::stoull(s);
 }
 
+// A bool is tested rather than narrowed. Reading 42 as a bool is true, which is what it
+// is where the driver hands the value over as a number rather than as text, and the
+// answer should not turn on which of the two a driver chose.
+inline auto from_string(std::string const& s, bool)
+{
+    return from_string(s, static_cast<long long>(0)) != 0;
+}
+
 template <typename R, typename std::enable_if<std::is_integral<R>::value, int>::type = 0>
 auto from_string(std::string const& s, R)
 {
@@ -5454,6 +5576,12 @@ void result::result_impl::get_ref_from_string_column(short column, T& result) co
         throw type_incompatible_error();
     std::string str;
     get_ref_impl(col.column_, str);
+    // An unbound column reports null only once the read has happened, and a null leaves
+    // nothing to convert: from_string would raise out of the standard library rather than
+    // the fallback being handed back. The caller tests for the null again after this
+    // returns.
+    if (is_null(column))
+        return;
     result = from_string<T>(str);
 }
 
@@ -5502,7 +5630,9 @@ void result::result_impl::get_ref_impl(short column, T& result) const
     switch (col.ctype_)
     {
     case SQL_C_BIT:
-        result = (T) * (ensure_pdata<int8_t>(column));
+        // A bit is 0 or 1 by definition. A driver writing the character '1' into the byte,
+        // as Oracle's does, means what it stored rather than 49.
+        result = static_cast<T>(*ensure_pdata<int8_t>(column) != 0 ? 1 : 0);
         return;
     case SQL_C_CHAR:
     case SQL_C_WCHAR:
@@ -5781,7 +5911,6 @@ connection::connection(string const& connection_string, long timeout)
 {
 }
 
-#ifdef NANODBC_HAS_STD_VARIANT
 connection::connection(
     string const& dsn,
     string const& user,
@@ -5795,7 +5924,6 @@ connection::connection(string const& connection_string, std::list<attribute> con
     : impl_(std::make_shared<connection_impl>(connection_string, attributes))
 {
 }
-#endif
 
 connection::~connection() noexcept {}
 
@@ -5819,7 +5947,6 @@ void connection::connect(string const& connection_string, long timeout)
     impl_->connect(connection_string, timeout);
 }
 
-#ifdef NANODBC_HAS_STD_VARIANT
 void connection::connect(
     string const& dsn,
     string const& user,
@@ -5833,7 +5960,6 @@ void connection::connect(string const& connection_string, std::list<attribute> c
 {
     impl_->connect(connection_string, attributes);
 }
-#endif
 
 #if !defined(NANODBC_DISABLE_ASYNC) && defined(SQL_ATTR_ASYNC_DBC_EVENT)
 bool connection::async_connect(
@@ -6265,7 +6391,11 @@ short statement::parameter_type(short param_index) const
     template void statement::bind(                                                                 \
         short, const type*, std::size_t, const type*, param_direction); /* n-ary, sentry */        \
     template void statement::bind(                                                                 \
-        short, const type*, std::size_t, const bool*, param_direction) /* n-ary, flags */
+        short, const type*, std::size_t, const bool*, param_direction); /* n-ary, flags */         \
+    template void statement::bind(                                                                 \
+        short, std::vector<type> const&, param_direction); /* vector, copied */                    \
+    template void statement::bind(                                                                 \
+        short, std::vector<type> const&, const bool*, param_direction) /* vector, flags */
 
 #define NANODBC_INSTANTIATE_BIND_VECTOR_STRINGS(type)                                              \
     template void statement::bind_strings(short, std::vector<type> const&, param_direction);       \
@@ -6386,6 +6516,22 @@ void statement::bind(
     param_direction direction)
 {
     impl_->bind(direction, param_index, values, nullptr, null_sentry);
+}
+
+template <class T>
+void statement::bind(short param_index, std::vector<T> const& values, param_direction direction)
+{
+    impl_->bind_vector(direction, param_index, values);
+}
+
+template <class T>
+void statement::bind(
+    short param_index,
+    std::vector<T> const& values,
+    bool const* nulls,
+    param_direction direction)
+{
+    impl_->bind_vector(direction, param_index, values, nulls);
 }
 
 template <class T, typename>
