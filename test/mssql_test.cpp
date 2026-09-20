@@ -221,6 +221,11 @@ TEST_CASE_METHOD(mssql_fixture, "test_batch_insert_integral", "[mssql][batch][in
     test_batch_insert_integral();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_batch_insert_null", "[mssql][batch][null]")
+{
+    test_batch_insert_null();
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_batch_insert_string", "[mssql][batch][string]")
 {
     test_batch_insert_string();
@@ -794,6 +799,59 @@ TEST_CASE_METHOD(mssql_fixture, "test_column_descriptor", "[mssql][columns]")
     test_column_descriptor();
 }
 
+TEST_CASE_METHOD(mssql_fixture, "test_column_descriptor_unsigned", "[mssql][columns]")
+{
+    auto c = connect();
+    create_table(
+        c,
+        NANODBC_TEXT("test_column_descriptor_unsigned"),
+        NANODBC_TEXT("(name text, ti tinyint, si smallint, i int, bi bigint"));
+
+    // insert
+    {
+        execute(
+            c,
+            NANODBC_TEXT("insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
+                         "('min', 0, -32768, -2147483648, -9223372036854775808);"));
+        execute(
+            c,
+            NANODBC_TEXT("insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
+                         "('mid', 128, 1, 2, 3);"));
+        execute(
+            c,
+            NANODBC_TEXT("insert into test_column_descriptor_unsigned (name,ti,si,i,bi) values "
+                         "('max', 255, 32767, 2147483647, 9223372036854775807);"));
+    }
+
+    // select
+    {
+        auto result = execute(
+            c,
+            NANODBC_TEXT(
+                "select name,ti,si,i,bi from test_column_descriptor_unsigned order by ti asc;"));
+        REQUIRE(result.column_unsigned(0)); // SQL_TRUE for non-numeric by default
+        REQUIRE(result.column_unsigned(1)); // SQL_TRUE for TINYINT as always unsigned in SQL Server
+        REQUIRE(!result.column_unsigned(2)); // SMALLINT
+        REQUIRE(!result.column_unsigned(3)); // INT
+        REQUIRE(!result.column_unsigned(4)); // BIGINT
+        REQUIRE(result.next());
+        REQUIRE(result.get<std::int16_t>(1) == 0);
+        REQUIRE(result.get<std::int16_t>(2) == -32768);
+        REQUIRE(result.get<std::int32_t>(3) == (-2147483647 - 1));
+        REQUIRE(result.get<std::int64_t>(4) == (-9223372036854775807 - 1));
+        REQUIRE(result.next());
+        REQUIRE(result.get<std::int16_t>(1) == 128);
+        REQUIRE(result.get<std::int16_t>(2) == 1);
+        REQUIRE(result.get<std::int32_t>(3) == 2);
+        REQUIRE(result.get<std::int64_t>(4) == 3);
+        REQUIRE(result.next());
+        REQUIRE(result.get<std::int16_t>(1) == 255);
+        REQUIRE(result.get<std::int16_t>(2) == 32767);
+        REQUIRE(result.get<std::int32_t>(3) == 2147483647);
+        REQUIRE(result.get<std::int64_t>(4) == 9223372036854775807);
+    }
+}
+
 TEST_CASE_METHOD(mssql_fixture, "test_connection_environment", "[mssql][connection]")
 {
     test_connection_environment();
@@ -1007,6 +1065,16 @@ PRIMARY KEY(t2_fid)
 TEST_CASE_METHOD(mssql_fixture, "test_integral", "[mssql][integral]")
 {
     test_integral<mssql_fixture>();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_integral_small_types", "[mssql][integral]")
+{
+    test_integral_small_types();
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_integral_small_types_batch", "[mssql][integral][batch]")
+{
+    test_integral_small_types_batch();
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_move", "[mssql][move]")
@@ -1431,6 +1499,24 @@ TEST_CASE_METHOD(mssql_fixture, "test_win32_variant_bit", "[mssql][variant][wind
     auto v = rs.get<_variant_t>(0);
     REQUIRE(v.vt == VT_BOOL);
     REQUIRE(static_cast<bool>(v) == true);
+}
+
+TEST_CASE_METHOD(mssql_fixture, "test_win32_variant_tinyint", "[mssql][variant][windows]")
+{
+    auto cn = connect();
+    auto rs = execute(
+        cn, NANODBC_TEXT("select CAST(0 AS TINYINT), CAST(128 AS TINYINT), CAST(255 AS TINYINT);"));
+    rs.next();
+
+    auto v0 = rs.get<_variant_t>(0);
+    REQUIRE(v0.vt == VT_UI1);
+    REQUIRE(static_cast<int>(v0) == 0);
+    auto v1 = rs.get<_variant_t>(1);
+    REQUIRE(v1.vt == VT_UI1);
+    REQUIRE(static_cast<int>(v1) == 128);
+    auto v2 = rs.get<_variant_t>(2);
+    REQUIRE(v2.vt == VT_UI1);
+    REQUIRE(static_cast<int>(v2) == 255);
 }
 
 TEST_CASE_METHOD(mssql_fixture, "test_win32_variant_timestamp", "[mssql][variant][windows]")
@@ -1991,10 +2077,9 @@ TEST_CASE_METHOD(mssql_fixture, "test_conn_attributes", "[mssql][conn_attibutes]
  */
 TEST_CASE_METHOD(mssql_fixture, "test_overallocate", "[mssql][overallocate]")
 {
-    std::u16string u16val = u"grün";
-    std::wstring wval(u16val.begin(), u16val.end());
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> convert_utf8;
-    nanodbc::string val = nanodbc::test::convert(convert_utf8.to_bytes(wval));
+    // "grün" as UTF-8, spelled in bytes so the test does not depend on the encoding of
+    // this source file.
+    nanodbc::string val = nanodbc::test::convert(std::string("gr\xC3\xBCn"));
     auto sql = NANODBC_TEXT("SELECT '") + val + NANODBC_TEXT("' AS A");
     auto conn = connect();
     nanodbc::result result = execute(conn, sql);

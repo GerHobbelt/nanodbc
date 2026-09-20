@@ -129,6 +129,11 @@ TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_integral", "[sqlite][batch][
     test_batch_insert_integral();
 }
 
+TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_null", "[sqlite][batch][null]")
+{
+    test_batch_insert_null();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_batch_insert_mixed", "[sqlite][batch]")
 {
     test_batch_insert_mixed();
@@ -314,6 +319,16 @@ TEST_CASE_METHOD(sqlite_fixture, "test_integral", "[sqlite][integral]")
     test_integral<sqlite_fixture>();
 }
 
+TEST_CASE_METHOD(sqlite_fixture, "test_integral_small_types", "[sqlite][integral]")
+{
+    test_integral_small_types();
+}
+
+TEST_CASE_METHOD(sqlite_fixture, "test_integral_small_types_batch", "[sqlite][integral][batch]")
+{
+    test_integral_small_types_batch();
+}
+
 TEST_CASE_METHOD(sqlite_fixture, "test_integral_boundary", "[sqlite][integral]")
 {
     nanodbc::connection connection = connect();
@@ -323,7 +338,7 @@ TEST_CASE_METHOD(sqlite_fixture, "test_integral_boundary", "[sqlite][integral]")
     execute(
         connection,
         NANODBC_TEXT(
-            "create table test_integral_boundary(i1 integer,i2 integer,i4 integer,i8 integer);"));
+            "create table test_integral_boundary(i1 tinyint,i2 smallint,i4 integer,i8 bigint);"));
 
     auto const sql =
         NANODBC_TEXT("insert into test_integral_boundary(i1,i2,i4,i8) values (?,?,?,?);");

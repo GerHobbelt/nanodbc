@@ -17,7 +17,6 @@
 
 #include <algorithm>
 #include <clocale>
-#include <codecvt>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -59,8 +58,6 @@ struct is_optional<std::optional<T>> : std::true_type
 #include <boost/locale/encoding_utf.hpp>
 #elif defined(__GNUC__) && (__GNUC__ < 5)
 #include <cwchar>
-#else
-#include <codecvt>
 #endif
 
 #ifdef __APPLE__
@@ -220,16 +217,6 @@ using nanodbc::wide_string;
 #define NANODBC_SQLCHAR SQLCHAR
 #endif
 
-#ifdef NANODBC_USE_IODBC_WIDE_STRINGS
-#define NANODBC_CODECVT_TYPE std::codecvt_utf8
-#else
-#ifdef _MSC_VER
-#define NANODBC_CODECVT_TYPE std::codecvt_utf8_utf16
-#else
-#define NANODBC_CODECVT_TYPE std::codecvt_utf8_utf16
-#endif
-#endif
-
 #if defined(NANODBC_OVERALLOCATE_CHAR)
 // If enabled, when auto-binding buffers to N/VAR/CHAR
 // columns, overallocate assuming each code-point
@@ -356,6 +343,163 @@ inline std::size_t size(NANODBC_SQLCHAR const (&array)[N]) noexcept
     return n < N ? n : N - 1;
 }
 
+// Conversion between UTF-8 and the wide encoding the driver manager expects.
+//
+// std::wstring_convert and the std::codecvt facets that used to do this were deprecated in
+// C++17 and removed in C++26. The encoding follows from the width of wide_char_t: four
+// bytes is UTF-32, which is what iODBC takes, and two bytes is UTF-16, which is what every
+// other driver manager takes.
+//
+// Malformed input throws std::range_error, as std::wstring_convert did, rather than being
+// silently replaced. A driver handing back text that does not decode is worth hearing
+// about instead of quietly turning into replacement characters.
+
+inline void throw_invalid_encoding()
+{
+    throw std::range_error("nanodbc: could not convert between UTF-8 and the driver encoding");
+}
+
+// A code point is valid if it is within range and is not one half of a surrogate pair.
+constexpr bool is_valid_code_point(char32_t cp)
+{
+    return cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF);
+}
+
+inline void append_as_utf8(char32_t cp, std::string& out)
+{
+    if (cp < 0x80)
+    {
+        out.push_back(static_cast<char>(cp));
+    }
+    else if (cp < 0x800)
+    {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+    else if (cp < 0x10000)
+    {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+    else
+    {
+        out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
+// Appends to a UTF-32 string, where every code point is one unit.
+template <class T, typename std::enable_if<sizeof(T) == 4, int>::type = 0>
+inline void append_as_wide(char32_t cp, std::basic_string<T>& out)
+{
+    out.push_back(static_cast<T>(cp));
+}
+
+// Appends to a UTF-16 string, splitting anything past the basic plane into a surrogate
+// pair.
+template <class T, typename std::enable_if<sizeof(T) == 2, int>::type = 0>
+inline void append_as_wide(char32_t cp, std::basic_string<T>& out)
+{
+    if (cp < 0x10000)
+    {
+        out.push_back(static_cast<T>(cp));
+    }
+    else
+    {
+        cp -= 0x10000;
+        out.push_back(static_cast<T>(0xD800 + (cp >> 10)));
+        out.push_back(static_cast<T>(0xDC00 + (cp & 0x3FF)));
+    }
+}
+
+// Reads one code point from UTF-8, leaving beg on the byte after it.
+inline char32_t next_utf8_code_point(char const*& beg, char const* end)
+{
+    auto const lead = static_cast<unsigned char>(*beg++);
+    if (lead < 0x80)
+        return lead;
+
+    // How many continuation bytes follow, and what the code point starts out as. Lead
+    // bytes of 0xC0 and 0xC1 only ever encode an overlong form, so they are rejected here
+    // along with the continuation bytes and the values above 0xF4.
+    int extra = 0;
+    char32_t cp = 0;
+    if (lead >= 0xC2 && lead <= 0xDF)
+    {
+        extra = 1;
+        cp = lead & 0x1F;
+    }
+    else if (lead >= 0xE0 && lead <= 0xEF)
+    {
+        extra = 2;
+        cp = lead & 0x0F;
+    }
+    else if (lead >= 0xF0 && lead <= 0xF4)
+    {
+        extra = 3;
+        cp = lead & 0x07;
+    }
+    else
+    {
+        throw_invalid_encoding();
+        return 0;
+    }
+
+    if (end - beg < extra)
+        throw_invalid_encoding();
+
+    for (int i = 0; i < extra; ++i)
+    {
+        auto const byte = static_cast<unsigned char>(*beg++);
+        if ((byte & 0xC0) != 0x80)
+            throw_invalid_encoding();
+        cp = (cp << 6) | (byte & 0x3F);
+    }
+
+    // Reject the encodings that are longer than the code point needs, since those let the
+    // same character be spelled more than one way.
+    if ((extra == 1 && cp < 0x80) || (extra == 2 && cp < 0x800) || (extra == 3 && cp < 0x10000))
+        throw_invalid_encoding();
+
+    if (!is_valid_code_point(cp))
+        throw_invalid_encoding();
+
+    return cp;
+}
+
+// Reads one code point from UTF-32.
+template <class T, typename std::enable_if<sizeof(T) == 4, int>::type = 0>
+inline char32_t next_wide_code_point(T const*& beg, T const*)
+{
+    auto const cp = static_cast<char32_t>(*beg++);
+    if (!is_valid_code_point(cp))
+        throw_invalid_encoding();
+    return cp;
+}
+
+// Reads one code point from UTF-16, joining a surrogate pair back together.
+template <class T, typename std::enable_if<sizeof(T) == 2, int>::type = 0>
+inline char32_t next_wide_code_point(T const*& beg, T const* end)
+{
+    char32_t const unit = static_cast<char16_t>(*beg++);
+    if (unit < 0xD800 || unit > 0xDFFF)
+        return unit;
+
+    // A low surrogate cannot lead, and a high surrogate must be followed by a low one.
+    if (unit >= 0xDC00 || beg == end)
+        throw_invalid_encoding();
+
+    char32_t const trail = static_cast<char16_t>(*beg);
+    if (trail < 0xDC00 || trail > 0xDFFF)
+        throw_invalid_encoding();
+    ++beg;
+
+    return 0x10000 + ((unit - 0xD800) << 10) + (trail - 0xDC00);
+}
+
 template <class T>
 inline void convert(T const* beg, size_t n, std::basic_string<T>& out)
 {
@@ -367,20 +511,12 @@ inline void convert(wide_char_t const* beg, size_t n, std::string& out)
 #ifdef NANODBC_ENABLE_BOOST
     using boost::locale::conv::utf_to_utf;
     out = utf_to_utf<char>(beg, beg + n);
-#elif defined(_MSC_VER) && (_MSC_VER == 1900)
-    // Workaround for confirmed bug in VS2015. See:
-    // https://connect.microsoft.com/VisualStudio/Feedback/Details/1403302
-    // https://social.msdn.microsoft.com/Forums/en-US/8f40dcd8-c67f-4eba-9134-a19b9178e481/vs-2015-rc-linker-stdcodecvt-error
-    // Why static? http://stackoverflow.com/questions/26196686/utf8-utf16-codecvt-poor-performance
-    static thread_local std::wstring_convert<NANODBC_CODECVT_TYPE<unsigned short>, unsigned short>
-        converter;
-    out = converter.to_bytes(
-        reinterpret_cast<unsigned short const*>(beg),
-        reinterpret_cast<unsigned short const*>(beg + n));
 #else
-    static thread_local std::wstring_convert<NANODBC_CODECVT_TYPE<wide_char_t>, wide_char_t>
-        converter;
-    out = converter.to_bytes(beg, beg + n);
+    out.clear();
+    out.reserve(n);
+    auto const* const end = beg + n;
+    while (beg != end)
+        append_as_utf8(next_wide_code_point(beg, end), out);
 #endif
 }
 
@@ -389,20 +525,12 @@ inline void convert(char const* beg, size_t n, wide_string& out)
 #ifdef NANODBC_ENABLE_BOOST
     using boost::locale::conv::utf_to_utf;
     out = utf_to_utf<wide_char_t>(beg, beg + n);
-#elif defined(_MSC_VER) && (_MSC_VER == 1900)
-    // Workaround for confirmed bug in VS2015. See:
-    // https://connect.microsoft.com/VisualStudio/Feedback/Details/1403302
-    // https://social.msdn.microsoft.com/Forums/en-US/8f40dcd8-c67f-4eba-9134-a19b9178e481/vs-2015-rc-linker-stdcodecvt-error
-    // Why static? http://stackoverflow.com/questions/26196686/utf8-utf16-codecvt-poor-performance
-    static thread_local std::wstring_convert<NANODBC_CODECVT_TYPE<unsigned short>, unsigned short>
-        converter;
-    auto s = converter.from_bytes(beg, beg + n);
-    auto p = reinterpret_cast<wide_char_t const*>(s.data());
-    out.assign(p, p + s.size());
 #else
-    static thread_local std::wstring_convert<NANODBC_CODECVT_TYPE<wide_char_t>, wide_char_t>
-        converter;
-    out = converter.from_bytes(beg, beg + n);
+    out.clear();
+    out.reserve(n);
+    auto const* const end = beg + n;
+    while (beg != end)
+        append_as_wide(next_utf8_code_point(beg, end), out);
 #endif
 }
 
@@ -653,9 +781,28 @@ struct sql_ctype
 };
 
 template <>
-struct sql_ctype<uint8_t>
+struct sql_ctype<bool>
 {
-    static const SQLSMALLINT value = SQL_C_BINARY;
+    // ODBC represents SQL_C_BIT as a single byte holding 0 or 1, which matches the
+    // representation of bool on every platform nanodbc supports.
+    static_assert(sizeof(bool) == 1, "binding bool as SQL_C_BIT requires a single byte bool");
+    static const SQLSMALLINT value = SQL_C_BIT;
+};
+
+template <typename T>
+struct sql_ctype<
+    T,
+    typename std::enable_if<is_integral8<T>::value && std::is_signed<T>::value>::type>
+{
+    static const SQLSMALLINT value = SQL_C_STINYINT;
+};
+
+template <typename T>
+struct sql_ctype<
+    T,
+    typename std::enable_if<is_integral8<T>::value && std::is_unsigned<T>::value>::type>
+{
+    static const SQLSMALLINT value = SQL_C_UTINYINT;
 };
 
 template <typename T>
@@ -808,6 +955,66 @@ public:
     bool bound_;
 };
 
+// Renders value as decimal digits, zero padded to at least width, keeping a minus sign in
+// front of the padding. Wider values keep all their digits rather than being truncated.
+inline std::string zero_padded(long value, std::size_t width)
+{
+    // Negating the most negative value is undefined, so the digits come from an unsigned
+    // copy. Fields of a driver-filled struct are not assumed to be in range.
+    auto const magnitude =
+        value < 0 ? 0UL - static_cast<unsigned long>(value) : static_cast<unsigned long>(value);
+    std::string const sign = value < 0 ? "-" : "";
+    auto digits = std::to_string(magnitude);
+    if (sign.size() + digits.size() < width)
+        digits.insert(0, width - sign.size() - digits.size(), '0');
+    return sign + digits;
+}
+
+// Renders a timestampoffset the way a backend renders a datetimeoffset value, for example
+// "2006-12-30 13:45:12.3450000 -08:00".
+//
+// A SQL_SS_TIMESTAMPOFFSET column is bound as a binary buffer holding the struct rather
+// than as text, so reading one as a string has to format it here. The struct counts
+// fractional seconds in billionths, while the column reports how many decimal digits it
+// actually carries, so scale decides how many of those digits are rendered.
+inline std::string
+timestampoffset_as_string(nanodbc::timestampoffset const& value, SQLSMALLINT scale)
+{
+    auto const& stamp = value.stamp;
+
+    auto result = zero_padded(stamp.year, 4);
+    result += '-';
+    result += zero_padded(stamp.month, 2);
+    result += '-';
+    result += zero_padded(stamp.day, 2);
+    result += ' ';
+    result += zero_padded(stamp.hour, 2);
+    result += ':';
+    result += zero_padded(stamp.min, 2);
+    result += ':';
+    result += zero_padded(stamp.sec, 2);
+
+    if (scale > 0 && scale <= 9)
+    {
+        // Narrow the billionths down to the digits the column carries.
+        long divisor = 1;
+        for (SQLSMALLINT i = scale; i < 9; ++i)
+            divisor *= 10;
+        result += '.';
+        result += zero_padded(stamp.fract / divisor, static_cast<std::size_t>(scale));
+    }
+
+    // Both offset fields carry the sign, so either one being negative means the whole
+    // offset is behind UTC.
+    bool const behind_utc = value.offset_hour < 0 || value.offset_minute < 0;
+    result += behind_utc ? " -" : " +";
+    result += zero_padded(std::abs(static_cast<int>(value.offset_hour)), 2);
+    result += ':';
+    result += zero_padded(std::abs(static_cast<int>(value.offset_minute)), 2);
+
+    return result;
+}
+
 // Encapsulates properties of statement parameter.
 // Parameter corresponds to parameter marker associated with a prepared SQL statement.
 struct bound_parameter
@@ -826,16 +1033,32 @@ template <typename T>
 struct bound_buffer
 {
     bound_buffer() = default;
-    bound_buffer(T const* values, std::size_t size, std::size_t value_size = 0)
+    bound_buffer(T const* values, std::size_t size, std::size_t value_size = 0) noexcept
         : values_(values)
         , size_(size)
         , value_size_(value_size)
     {
     }
 
+    bound_buffer(
+        T const* values,
+        std::size_t size,
+        std::size_t value_size,
+        SQLSMALLINT ctype) noexcept
+        : values_(values)
+        , size_(size)
+        , value_size_(value_size)
+        , ctype_(ctype)
+    {
+    }
+
     T const* values_ = nullptr;  // Pointer to buffer for parameter's data
     std::size_t size_ = 0;       // Number of values (1 or length of array)
     std::size_t value_size_ = 0; // Size of single value (max size). Zero, if ignored.
+    // ODBC C type of the values. Defaults to the mapping for T, but buffers of raw binary
+    // data override it with SQL_C_BINARY, since std::uint8_t itself maps to the numeric
+    // SQL_C_UTINYINT.
+    SQLSMALLINT ctype_ = sql_ctype<T>::value;
 };
 
 inline void deallocate_handle(SQLHANDLE& handle, short handle_type)
@@ -2291,13 +2514,13 @@ public:
         NANODBC_CALL_RC(
             SQLBindParameter,
             rc,
-            stmt_,               // handle
-            param.index_ + 1,    // parameter number
-            param.iotype_,       // input or output type
-            sql_ctype<T>::value, // value type
-            param.type_,         // parameter type
-            param_size,          // column size ignored for many types, but needed for strings
-            param.scale_,        // decimal digits
+            stmt_,            // handle
+            param.index_ + 1, // parameter number
+            param.iotype_,    // input or output type
+            buffer.ctype_,    // value type
+            param.type_,      // parameter type
+            param_size,       // column size ignored for many types, but needed for strings
+            param.scale_,     // decimal digits
             (SQLPOINTER)buffer.values_, // parameter value
             value_size,                 // buffer length
             bind_len_or_null_[param.index_].data());
@@ -2322,13 +2545,13 @@ public:
         NANODBC_CALL_RC(
             SQLBindParameter,
             rc,
-            stmt_,               // handle
-            param.index_ + 1,    // parameter number
-            param.iotype_,       // input or output type
-            sql_ctype<T>::value, // value type
-            param.type_,         // parameter type
-            param.size_,         // column size ignored for many types, but needed for strings
-            param.scale_,        // decimal digits
+            stmt_,            // handle
+            param.index_ + 1, // parameter number
+            param.iotype_,    // input or output type
+            buffer.ctype_,    // value type
+            param.type_,      // parameter type
+            param.size_,      // column size ignored for many types, but needed for strings
+            param.scale_,     // decimal digits
             (SQLPOINTER)buffer.values_, // parameter value
             buffer_size,                // buffer length
             (buffer.size_ <= 1 ? nullptr : bind_len_or_null_[param.index_].data()));
@@ -2395,7 +2618,8 @@ public:
                 bind_len_or_null_[param_index][i] = values[i].size();
             }
         }
-        bound_buffer<uint8_t> buffer(binary_data_[param_index].data(), batch_size, max_length);
+        bound_buffer<uint8_t> buffer(
+            binary_data_[param_index].data(), batch_size, max_length, SQL_C_BINARY);
         bind_parameter(param, buffer);
     }
 
@@ -2529,10 +2753,18 @@ void statement::statement_impl::bind(
     bound_parameter param;
     prepare_bind(param_index, batch_size, direction, param);
 
-    if (nulls || null_sentry)
+    // prepare_bind starts every indicator out as SQL_NULL_DATA, so only the values that
+    // are not null need marking here.
+    if (null_sentry)
     {
         for (std::size_t i = 0; i < batch_size; ++i)
-            if ((null_sentry && !equals(values[i], *null_sentry)) || (nulls && !nulls[i]) || !nulls)
+            if (!equals(values[i], *null_sentry))
+                bind_len_or_null_[param_index][i] = param.size_;
+    }
+    else if (nulls)
+    {
+        for (std::size_t i = 0; i < batch_size; ++i)
+            if (!nulls[i])
                 bind_len_or_null_[param_index][i] = param.size_;
     }
     else
@@ -2982,7 +3214,7 @@ public:
             stmt_impl->native_statement_handle(), // handle
             param.index_ + 1,                     // parameter number
             param.iotype_,                        // input or output type
-            sql_ctype<T>::value,                  // value type
+            buffer.ctype_,                        // value type
             param.type_,                          // parameter type
             param_size,   // column size ignored for many types, but needed for strings
             param.scale_, // decimal digits
@@ -3011,7 +3243,7 @@ public:
             stmt_impl->native_statement_handle(), // handle
             param.index_ + 1,                     // parameter number
             param.iotype_,                        // input or output type
-            sql_ctype<T>::value,                  // value type
+            buffer.ctype_,                        // value type
             param.type_,                          // parameter type
             param.size_,  // column size ignored for many types, but needed for strings
             param.scale_, // decimal digits
@@ -3081,7 +3313,8 @@ public:
                 bind_len_or_null_[param_index][i] = values[i].size();
             }
         }
-        bound_buffer<uint8_t> buffer(binary_data_[param_index].data(), batch_size, max_length);
+        bound_buffer<uint8_t> buffer(
+            binary_data_[param_index].data(), batch_size, max_length, SQL_C_BINARY);
         bind_parameter(param, buffer);
     }
 
@@ -3226,10 +3459,18 @@ void table_valued_parameter::table_valued_parameter_impl::bind(
     bound_parameter param;
     prepare_bind(param_index, batch_size, param);
 
-    if (nulls || null_sentry)
+    // prepare_bind starts every indicator out as SQL_NULL_DATA, so only the values that
+    // are not null need marking here.
+    if (null_sentry)
     {
         for (std::size_t i = 0; i < batch_size; ++i)
-            if ((null_sentry && !equals(values[i], *null_sentry)) || (nulls && !nulls[i]) || !nulls)
+            if (!equals(values[i], *null_sentry))
+                bind_len_or_null_[param_index][i] = param.size_;
+    }
+    else if (nulls)
+    {
+        for (std::size_t i = 0; i < batch_size; ++i)
+            if (!nulls[i])
                 bind_len_or_null_[param_index][i] = param.size_;
     }
     else
@@ -3741,6 +3982,35 @@ public:
         return col.ctype_;
     }
 
+    bool column_unsigned(short column) const
+    {
+        throw_if_column_is_out_of_range(column);
+
+        SQLLEN type_unsigned = SQL_FALSE;
+        RETCODE rc;
+        NANODBC_CALL_RC(
+            NANODBC_FUNC(SQLColAttribute),
+            rc,
+            stmt_.native_statement_handle(),
+            static_cast<SQLUSMALLINT>(column + 1),
+            SQL_DESC_UNSIGNED,
+            nullptr,
+            0,
+            nullptr,
+            &type_unsigned);
+        if (!success(rc))
+            NANODBC_THROW_DATABASE_ERROR(stmt_.native_statement_handle(), SQL_HANDLE_STMT);
+
+        // SQL_TRUE if the column is unsigned (or not numeric).
+        // SQL_FALSE if the column is signed.
+        return type_unsigned == SQL_TRUE;
+    }
+
+    bool column_unsigned(string const& column_name) const
+    {
+        return column_unsigned(this->column(column_name));
+    }
+
     bool next_result()
     {
         RETCODE rc;
@@ -4042,16 +4312,62 @@ private:
             col.scale_ = scale;
             bound_columns_by_name_[col.name_] = &col;
 
+            bool const is_unsigned = column_unsigned(i);
+
             using namespace std; // if int64_t is in std namespace (in c++11)
             switch (col.sqltype_)
             {
             case SQL_BIT:
+                col.ctype_ = SQL_C_BIT;
+                col.clen_ = sizeof(int8_t);
+                break;
             case SQL_TINYINT:
+                if (is_unsigned)
+                {
+                    col.ctype_ = SQL_C_UTINYINT;
+                    col.clen_ = sizeof(uint8_t);
+                }
+                else
+                {
+                    col.ctype_ = SQL_C_STINYINT;
+                    col.clen_ = sizeof(int8_t);
+                }
+                break;
             case SQL_SMALLINT:
-            case SQL_INTEGER:
+                if (is_unsigned)
+                {
+                    col.ctype_ = SQL_C_USHORT;
+                    col.clen_ = sizeof(uint16_t);
+                }
+                else
+                {
+                    col.ctype_ = SQL_C_SSHORT;
+                    col.clen_ = sizeof(int16_t);
+                }
+                break;
+            case SQL_INTEGER: // TODO: Can be 32 or 64 bit? Then sizeof(SQLINTEGER)
+                if (is_unsigned)
+                {
+                    col.ctype_ = SQL_C_ULONG;
+                    col.clen_ = sizeof(uint32_t);
+                }
+                else
+                {
+                    col.ctype_ = SQL_C_SLONG;
+                    col.clen_ = sizeof(int32_t);
+                }
+                break;
             case SQL_BIGINT:
-                col.ctype_ = SQL_C_SBIGINT;
-                col.clen_ = sizeof(int64_t);
+                if (is_unsigned)
+                {
+                    col.ctype_ = SQL_C_UBIGINT;
+                    col.clen_ = sizeof(uint64_t);
+                }
+                else
+                {
+                    col.ctype_ = SQL_C_SBIGINT;
+                    col.clen_ = sizeof(int64_t);
+                }
                 break;
             case SQL_DOUBLE:
             case SQL_FLOAT:
@@ -4354,6 +4670,16 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
     case SQL_C_CHAR:
     case SQL_C_BINARY:
     {
+        if (col.ctype_ == SQL_C_BINARY && col.sqltype_ == SQL_SS_TIMESTAMPOFFSET)
+        {
+            // This buffer holds a timestampoffset struct rather than text, so render it
+            // instead of copying it out as characters.
+            convert(
+                timestampoffset_as_string(*ensure_pdata<timestampoffset>(column), col.scale_),
+                result);
+            return;
+        }
+
         if (!is_bound(column))
         {
             // Input is always std::string, while output may be std::string or wide_string
@@ -4472,6 +4798,7 @@ inline void result::result_impl::get_ref_impl(short column, T& result) const
     }
 
     case SQL_C_LONG:
+    case SQL_C_SLONG:
     {
         std::string buffer(column_size + 1, 0); // ensure terminating null
         const int32_t data = *ensure_pdata<int32_t>(column);
@@ -4716,7 +5043,7 @@ inline void result::result_impl::get_ref_impl<_variant_t>(short column, _variant
     }
     case SQL_C_BIT:
     {
-        auto const v = *(ensure_pdata<short>(column));
+        auto const v = *(ensure_pdata<int8_t>(column));
         result = _variant_t(!!v ? VARIANT_TRUE : VARIANT_FALSE, VT_BOOL);
         break;
     }
@@ -4736,22 +5063,28 @@ inline void result::result_impl::get_ref_impl<_variant_t>(short column, _variant
     }
     case SQL_C_TINYINT:
     case SQL_C_STINYINT:
-        result = (char)*(ensure_pdata<short>(column));
+        result = (char)*(ensure_pdata<int16_t>(column));
         break;
     case SQL_C_UTINYINT:
-        result = (unsigned char)*(ensure_pdata<unsigned short>(column));
+        result = (unsigned char)*(ensure_pdata<uint16_t>(column));
         break;
     case SQL_C_SHORT:
     case SQL_C_SSHORT:
-        result = *(ensure_pdata<short>(column));
+    {
+        auto d = *(ensure_pdata<int16_t>(column));
+        result = _variant_t(d, VT_I2);
         break;
+    }
     case SQL_C_USHORT:
-        result = *(ensure_pdata<unsigned short>(column));
+        result = *(ensure_pdata<uint16_t>(column));
         break;
     case SQL_C_LONG:
     case SQL_C_SLONG:
-        result = *(ensure_pdata<int32_t>(column));
+    {
+        long d = *(ensure_pdata<int32_t>(column));
+        result = _variant_t(d, VT_I4); // avoid VT_INT
         break;
+    }
     case SQL_C_ULONG:
         result = *(ensure_pdata<uint32_t>(column));
         break;
@@ -4977,15 +5310,26 @@ void result::result_impl::get_ref_impl(short column, T& result) const
     using namespace std; // if int64_t is in std namespace (in c++11)
     switch (col.ctype_)
     {
+    case SQL_C_BIT:
+        result = (T) * (ensure_pdata<int8_t>(column));
+        return;
     case SQL_C_CHAR:
     case SQL_C_WCHAR:
         get_ref_from_string_column(column, result);
         return;
+    case SQL_C_TINYINT:
+    case SQL_C_STINYINT:
+        result = (T) * (ensure_pdata<int8_t>(column));
+        return;
+    case SQL_C_UTINYINT:
+        result = (T) * (ensure_pdata<uint8_t>(column));
+        return;
+    case SQL_C_SHORT:
     case SQL_C_SSHORT:
-        result = (T) * (ensure_pdata<short>(column));
+        result = (T) * (ensure_pdata<int16_t>(column));
         return;
     case SQL_C_USHORT:
-        result = (T) * (ensure_pdata<unsigned short>(column));
+        result = (T) * (ensure_pdata<uint16_t>(column));
         return;
     case SQL_C_LONG:
     case SQL_C_SLONG:
@@ -5749,6 +6093,8 @@ short statement::parameter_type(short param_index) const
 // The following are the only supported instantiations of statement::bind().
 NANODBC_INSTANTIATE_BINDS(std::string::value_type);
 NANODBC_INSTANTIATE_BINDS(wide_string::value_type);
+NANODBC_INSTANTIATE_BINDS(signed char);
+NANODBC_INSTANTIATE_BINDS(unsigned char);
 NANODBC_INSTANTIATE_BINDS(short);
 NANODBC_INSTANTIATE_BINDS(unsigned short);
 NANODBC_INSTANTIATE_BINDS(int);
@@ -5762,6 +6108,14 @@ NANODBC_INSTANTIATE_BINDS(double);
 NANODBC_INSTANTIATE_BINDS(date);
 NANODBC_INSTANTIATE_BINDS(time);
 NANODBC_INSTANTIATE_BINDS(timestamp);
+
+// bool is bound as SQL_C_BIT, and only the forms that take no null information can be
+// instantiated for it. The null_sentry form takes `type const*` and the null flags form
+// takes `bool const*`, so for type=bool the two collapse into the same signature and
+// neither an explicit instantiation nor a call could choose between them. Bind nullable
+// booleans as a wider integral type instead.
+template void statement::bind(short, const bool*, param_direction);              // 1-ary
+template void statement::bind(short, const bool*, std::size_t, param_direction); // n-ary
 
 NANODBC_INSTANTIATE_BIND_STRINGS(std::string);
 NANODBC_INSTANTIATE_BIND_STRINGS(wide_string);
@@ -6335,9 +6689,12 @@ void table_valued_parameter::close()
         short, type::value_type const*, std::size_t, std::size_t, type::value_type const*);        \
     template void table_valued_parameter::bind_strings(                                            \
         short, type::value_type const*, std::size_t, std::size_t, bool const*)
+
 // The following are the only supported instantiations of statement::bind().
 NANODBC_INSTANTIATE_TVP_BINDS(std::string::value_type);
 NANODBC_INSTANTIATE_TVP_BINDS(wide_string::value_type);
+NANODBC_INSTANTIATE_TVP_BINDS(signed char);
+NANODBC_INSTANTIATE_TVP_BINDS(unsigned char);
 NANODBC_INSTANTIATE_TVP_BINDS(short);
 NANODBC_INSTANTIATE_TVP_BINDS(unsigned short);
 NANODBC_INSTANTIATE_TVP_BINDS(int);
@@ -6351,6 +6708,9 @@ NANODBC_INSTANTIATE_TVP_BINDS(double);
 NANODBC_INSTANTIATE_TVP_BINDS(date);
 NANODBC_INSTANTIATE_TVP_BINDS(time);
 NANODBC_INSTANTIATE_TVP_BINDS(timestamp);
+
+// See statement::bind above for why bool only gets the form without null information.
+template void table_valued_parameter::bind(short, const bool*, std::size_t); // n-ary
 
 NANODBC_INSTANTIATE_TVP_BIND_STRINGS(std::string);
 NANODBC_INSTANTIATE_TVP_BIND_STRINGS(wide_string);
@@ -7426,6 +7786,16 @@ int result::column_c_datatype(string const& column_name) const
     return impl_->column_c_datatype(column_name);
 }
 
+bool result::column_unsigned(short column) const
+{
+    return impl_->column_unsigned(column);
+}
+
+bool result::column_unsigned(string const& column_name) const
+{
+    return impl_->column_unsigned(column_name);
+}
+
 bool result::next_result()
 {
     return impl_->next_result();
@@ -7502,6 +7872,9 @@ result::operator bool() const
 // The following are the only supported instantiations of result::get_ref().
 template void result::get_ref(short, std::string::value_type&) const;
 template void result::get_ref(short, wide_string::value_type&) const;
+template void result::get_ref(short, bool&) const;
+template void result::get_ref(short, signed char&) const;
+template void result::get_ref(short, unsigned char&) const;
 template void result::get_ref(short, short&) const;
 template void result::get_ref(short, unsigned short&) const;
 template void result::get_ref(short, int&) const;
@@ -7523,6 +7896,9 @@ template void result::get_ref(short, _variant_t&) const;
 
 template void result::get_ref(string const&, std::string::value_type&) const;
 template void result::get_ref(string const&, wide_string::value_type&) const;
+template void result::get_ref(string const&, bool&) const;
+template void result::get_ref(string const&, signed char&) const;
+template void result::get_ref(string const&, unsigned char&) const;
 template void result::get_ref(string const&, short&) const;
 template void result::get_ref(string const&, unsigned short&) const;
 template void result::get_ref(string const&, int&) const;
@@ -7546,6 +7922,9 @@ template void result::get_ref(string const&, _variant_t&) const;
 // The following are the only supported instantiations of result::get() with optional support.
 template void result::get_ref(short, std::optional<std::string::value_type>&) const;
 template void result::get_ref(short, std::optional<wide_string::value_type>&) const;
+template void result::get_ref(short, std::optional<bool>&) const;
+template void result::get_ref(short, std::optional<signed char>&) const;
+template void result::get_ref(short, std::optional<unsigned char>&) const;
 template void result::get_ref(short, std::optional<short>&) const;
 template void result::get_ref(short, std::optional<unsigned short>&) const;
 template void result::get_ref(short, std::optional<int>&) const;
@@ -7567,6 +7946,9 @@ template void result::get_ref(short, std::optional<_variant_t>&) const;
 
 template void result::get_ref(string const&, std::optional<std::string::value_type>&) const;
 template void result::get_ref(string const&, std::optional<wide_string::value_type>&) const;
+template void result::get_ref(string const&, std::optional<bool>&) const;
+template void result::get_ref(string const&, std::optional<signed char>&) const;
+template void result::get_ref(string const&, std::optional<unsigned char>&) const;
 template void result::get_ref(string const&, std::optional<short>&) const;
 template void result::get_ref(string const&, std::optional<unsigned short>&) const;
 template void result::get_ref(string const&, std::optional<int>&) const;
@@ -7592,6 +7974,9 @@ template void
 result::get_ref(short, const std::string::value_type&, std::string::value_type&) const;
 template void
 result::get_ref(short, const wide_string::value_type&, wide_string::value_type&) const;
+template void result::get_ref(short, const bool&, bool&) const;
+template void result::get_ref(short, const signed char&, signed char&) const;
+template void result::get_ref(short, const unsigned char&, unsigned char&) const;
 template void result::get_ref(short, const short&, short&) const;
 template void result::get_ref(short, const unsigned short&, unsigned short&) const;
 template void result::get_ref(short, const int&, int&) const;
@@ -7616,6 +8001,9 @@ template void
 result::get_ref(string const&, const std::string::value_type&, std::string::value_type&) const;
 template void
 result::get_ref(string const&, const wide_string::value_type&, wide_string::value_type&) const;
+template void result::get_ref(string const&, const bool&, bool&) const;
+template void result::get_ref(string const&, const signed char&, signed char&) const;
+template void result::get_ref(string const&, const unsigned char&, unsigned char&) const;
 template void result::get_ref(string const&, const short&, short&) const;
 template void result::get_ref(string const&, const unsigned short&, unsigned short&) const;
 template void result::get_ref(string const&, const int&, int&) const;
@@ -7641,6 +8029,9 @@ template void result::get_ref(string const&, _variant_t const&, _variant_t&) con
 // The following are the only supported instantiations of result::get().
 template std::string::value_type result::get(short) const;
 template wide_string::value_type result::get(short) const;
+template bool result::get(short) const;
+template signed char result::get(short) const;
+template unsigned char result::get(short) const;
 template short result::get(short) const;
 template unsigned short result::get(short) const;
 template int result::get(short) const;
@@ -7664,6 +8055,9 @@ template _variant_t result::get(short) const;
 
 template std::string::value_type result::get(string const&) const;
 template wide_string::value_type result::get(string const&) const;
+template bool result::get(string const&) const;
+template signed char result::get(string const&) const;
+template unsigned char result::get(string const&) const;
 template short result::get(string const&) const;
 template unsigned short result::get(string const&) const;
 template int result::get(string const&) const;
@@ -7689,6 +8083,9 @@ template _variant_t result::get(string const&) const;
 // The following are the only supported instantiations of result::get() with optional support.
 template std::optional<std::string::value_type> result::get(short) const;
 template std::optional<wide_string::value_type> result::get(short) const;
+template std::optional<bool> result::get(short) const;
+template std::optional<signed char> result::get(short) const;
+template std::optional<unsigned char> result::get(short) const;
 template std::optional<short> result::get(short) const;
 template std::optional<unsigned short> result::get(short) const;
 template std::optional<int> result::get(short) const;
@@ -7711,6 +8108,9 @@ template std::optional<_variant_t> result::get(short) const;
 
 template std::optional<std::string::value_type> result::get(string const&) const;
 template std::optional<wide_string::value_type> result::get(string const&) const;
+template std::optional<bool> result::get(string const&) const;
+template std::optional<signed char> result::get(string const&) const;
+template std::optional<unsigned char> result::get(string const&) const;
 template std::optional<short> result::get(string const&) const;
 template std::optional<unsigned short> result::get(string const&) const;
 template std::optional<int> result::get(string const&) const;
@@ -7735,6 +8135,9 @@ template std::optional<_variant_t> result::get(string const&) const;
 // The following are the only supported instantiations of result::get() with fallback.
 template std::string::value_type result::get(short, const std::string::value_type&) const;
 template wide_string::value_type result::get(short, const wide_string::value_type&) const;
+template bool result::get(short, const bool&) const;
+template signed char result::get(short, const signed char&) const;
+template unsigned char result::get(short, const unsigned char&) const;
 template short result::get(short, const short&) const;
 template unsigned short result::get(short, const unsigned short&) const;
 template int result::get(short, const int&) const;
@@ -7758,6 +8161,9 @@ template _variant_t result::get(short, _variant_t const&) const;
 
 template std::string::value_type result::get(string const&, const std::string::value_type&) const;
 template wide_string::value_type result::get(string const&, const wide_string::value_type&) const;
+template bool result::get(string const&, const bool&) const;
+template signed char result::get(string const&, const signed char&) const;
+template unsigned char result::get(string const&, const unsigned char&) const;
 template short result::get(string const&, const short&) const;
 template unsigned short result::get(string const&, const unsigned short&) const;
 template int result::get(string const&, const int&) const;
