@@ -26,8 +26,9 @@ import subprocess
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
-#
-needs_sphinx = "1.4"
+# requirements.txt pins nothing, so this is the floor the extensions themselves set:
+# Breathe requires 7.2 or later, sphinx_rtd_theme 6 or later.
+needs_sphinx = "7.2"
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
@@ -99,6 +100,10 @@ site_url = "https://nanodbc.github.io/nanodbc"
 generated_dir = os.path.join(doc_dir, "_generated")
 version_list_path = os.path.join(generated_dir, "versions.rst.inc")
 
+# Stands in for the patch component of a series directory when ordering the list, a series
+# being whatever patch was released from it most recently.
+LATEST_IN_SERIES = float("inf")
+
 
 def published_versions():
     """Versions whose documentation is on the website, newest first.
@@ -121,19 +126,23 @@ def published_versions():
     except (OSError, subprocess.SubprocessError):
         return None
 
-    current = f"v{release}"
+    # This build writes the root and the directory for its own minor series, so neither is
+    # an older version: listing the series would have the page linking to itself. The full
+    # version is excluded too, for the releases archived under one before the series
+    # directories came in.
+    series = ".".join(release.split(".")[:2])
+    being_written = {f"v{release}", f"v{series}"}
+
     found = []
     for name in listing.split():
-        # The patch component is optional because the branch has carried a directory
-        # without one before now.
+        # The patch component is optional: the series directories have none.
         matched = re.fullmatch(r"v(\d+)\.(\d+)(?:\.(\d+))?", name)
-        # The version being built has no archive of its own yet, and would not belong in a
-        # list of the older ones even once it has.
-        if not matched or name == current:
+        if not matched or name in being_written:
             continue
         major, minor, patch = matched.groups()
-        # A directory naming no patch sorts below the .0 release it stands in for.
-        order = (int(major), int(minor), int(patch) if patch else -1)
+        # A series directory carries the newest patch released from it, so it sorts above
+        # any single release archived from the same minor.
+        order = (int(major), int(minor), int(patch) if patch else LATEST_IN_SERIES)
         found.append((order, name))
     return [name for _, name in sorted(found, reverse=True)]
 
@@ -177,7 +186,9 @@ language = "en"
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = []
+# doc/README.md has the reader build in a virtualenv here, and its site-packages carry
+# enough .rst of their own to bury the warnings that belong to nanodbc.
+exclude_patterns = [".venv", ".pyvenv"]
 
 # The reST default role (used for this markup: `text`) to use for all
 # documents.
@@ -230,7 +241,7 @@ html_theme = "sphinx_rtd_theme"
 # The name for this set of Sphinx documents.
 # "<project> v<release> documentation" by default.
 #
-# html_title = 'nanodbc v2.15.0'
+# html_title = 'nanodbc vX.Y.Z'
 
 # A shorter title for the navigation bar.  Default is the same as html_title.
 #
@@ -412,7 +423,7 @@ texinfo_documents = [
         "nanodbc Documentation",
         author,
         "nanodbc",
-        "One line description of project.",
+        "A small C++ wrapper for the native C ODBC API.",
         "Miscellaneous",
     ),
 ]

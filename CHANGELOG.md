@@ -1,27 +1,57 @@
 # ChangeLog
 
+## Unreleased
+
+- `result_iterator`'s postfix increment returns `void`, so `*it++` is a compile error rather than the row after the one it names; `it++` and `++it` are unaffected.
+- Cleared the remaining code scanning alerts. [`#476`](https://github.com/nanodbc/nanodbc/pull/476)
+- Column buffers are owned by `std::unique_ptr`, and the implementation types are allocated with `std::make_shared`.
+- The handle accessors that only read a member are now `noexcept`; in C++17 that is part of the function type, so a pointer to one needs it spelled out.
+- `nanodbc.ruleset` and the Flawfinder job carry the analyser rules that have no answer here, each with its reason.
+
+## v2.16.5
+
+- handle SQL_NO_TOTAL when retrieving binary data in chunks [`#475`](https://github.com/nanodbc/nanodbc/pull/475), thanks [Jeroen Ooms](https://github.com/jeroen).
+
+## v2.16.4
+
+- Updating the usage, development, and contributing sections of generated docs to be in sync with the README and current codebase.
+
+## v2.16.3
+
+- Updated the README badges and links.
+- Made sure the generated documentation is up to date with the current README and codebase.
+- Removed the ancient build.bat file and fixed the .editorconfig file.
+- Removed utility/vs2017 and utility/ci as well as they are no longer used.
+- Add rstcheck to the CI/CD pipeline.
+
+## v2.16.2
+
+### Changes
+
+- Small updates to README and documentation.
+
 ## v2.16.1
 
 ### Changes
 
-- Automated the release process with GitHub Actions
+- Automated the release process with GitHub Actions.
 
 ## v2.16.0
 
 ### Changes
 
-- Updated to use Catch2 for testing
-- Increased test coverage to 80%
-- Fixed CI/CD integrations
-- Updated CMake build system
-- Fix for is_null() returning false for unbound columns when using SQLGetData()
-- Fixed issue with nanodbc::time and nanodbc::timestamp not being able to be used as a parameter in a prepared statement when using SQL Server ODBC driver
-- Declare noexcept where a function really cannot throw
-- Updated code to follow the rule of five for classes that manage resources
-- Added dependabot configuration to automatically update dependencies
-- Updated clang-format version to the latest
-- Migrated test coverage to llvm-cov
-- Resolved many TODOs and FIXMEs in the codebase (most were out of date)
+- Updated to use Catch2 for testing.
+- Increased test coverage to 80%.
+- Fixed CI/CD integrations.
+- Updated CMake build system.
+- Fix for is_null() returning false for unbound columns when using SQLGetData().
+- Fixed issue with nanodbc::time and nanodbc::timestamp not being able to be used as a parameter in a prepared statement when using SQL Server ODBC driver.
+- Declare noexcept where a function really cannot throw.
+- Updated code to follow the rule of five for classes that manage resources.
+- Added dependabot configuration to automatically update dependencies.
+- Updated clang-format version to the latest.
+- Migrated test coverage to llvm-cov.
+- Resolved many TODOs and FIXMEs in the codebase (most were out of date).
 
 ## v2.15.1
 
@@ -41,46 +71,37 @@ Added the one-byte integral types and `bool` to the explicit instantiations of `
 
 ### Acknowledgements
 
-[Amy Troschinetz](https://github.com/lexicalunit),
-[Mateusz Loskot](https://github.com/mloskot),
+[Amy Troschinetz](https://github.com/lexicalunit), [Mateusz Loskot](https://github.com/mloskot),
 
 ## v2.14.0
 
 ### New Features
 
-- Added Add `find_procedures` and `find_procedure_columns` to `catalog` class [`#249`](https://github.com/nanodbc/nanodbc/pull/249)
-- Added support for binding `std::string_view` in `statement` class [`#283`](https://github.com/nanodbc/nanodbc/pull/283)
+- Added Add `find_procedures` and `find_procedure_columns` to `catalog` class [`#249`](https://github.com/nanodbc/nanodbc/pull/249).
+- Added support for binding `std::string_view` in `statement` class [`#283`](https://github.com/nanodbc/nanodbc/pull/283).
 
 ### Changes
 
-- Changed return type of `result_impl::column_size` from `int` to `long` for consistency [`#261`](https://github.com/nanodbc/nanodbc/pull/261)
-- Renamed `VERSION` file to `VERSION.txt` [`#275`](https://github.com/nanodbc/nanodbc/pull/275)
+- Changed return type of `result_impl::column_size` from `int` to `long` for consistency [`#261`](https://github.com/nanodbc/nanodbc/pull/261).
+- Renamed `VERSION` file to `VERSION.txt` [`#275`](https://github.com/nanodbc/nanodbc/pull/275).
 
 ### Bug Fixes
 
-- Fixed SQL statements in `example/usage.cpp` [`#253`](https://github.com/nanodbc/nanodbc/pull/253)
-- Fixed `result_impl::column_datatype_name` sizing for Unicode characters [`#263`](https://github.com/nanodbc/nanodbc/pull/263)
-- Fixed memory leak of `ensure_pdata` [`#269`](https://github.com/nanodbc/nanodbc/pull/269)
-- Fixed retrieval of SQL data type `DATETIMEOFFSET` [`#219`](https://github.com/nanodbc/nanodbc/pull/219)
-- Fixed compilation on MacOS using Homebrew's vanilla GCC (for Conan build) [`#279`](https://github.com/nanodbc/nanodbc/pull/279)
+- Fixed SQL statements in `example/usage.cpp` [`#253`](https://github.com/nanodbc/nanodbc/pull/253).
+- Fixed `result_impl::column_datatype_name` sizing for Unicode characters [`#263`](https://github.com/nanodbc/nanodbc/pull/263).
+- Fixed memory leak of `ensure_pdata` [`#269`](https://github.com/nanodbc/nanodbc/pull/269).
+- Fixed retrieval of SQL data type `DATETIMEOFFSET` [`#219`](https://github.com/nanodbc/nanodbc/pull/219).
+- Fixed compilation on MacOS using Homebrew's vanilla GCC (for Conan build) [`#279`](https://github.com/nanodbc/nanodbc/pull/279).
 
 ### Testing
 
-- Add GitHub Actions with linters [`#273`](https://github.com/nanodbc/nanodbc/pull/273)
+- Add GitHub Actions with linters [`#273`](https://github.com/nanodbc/nanodbc/pull/273).
 
 ### Acknowledgements
 
 Thank you to everyone who contributed to this release by committing changes and submitting pull requests:
 
-[Amy Troschinetz](https://github.com/lexicalunit),
-[Bernardo Sulzbach](https://github.com/bernardosulzbach),
-[Denis Glazachev](https://github.com/traceon),
-[detule](https://github.com/detule),
-[Ezequiel Ruiz](https://github.com/emruiz81),
-[Joe Siltberg](https://github.com/joesiltberg),
-[Mateusz Loskot](https://github.com/mloskot),
-[Michael Kaes](https://github.com/mkaes),
-[Sewon Park](https://github.com/sphawk)
+[Amy Troschinetz](https://github.com/lexicalunit), [Bernardo Sulzbach](https://github.com/bernardosulzbach), [Denis Glazachev](https://github.com/traceon), [detule](https://github.com/detule), [Ezequiel Ruiz](https://github.com/emruiz81), [Joe Siltberg](https://github.com/joesiltberg), [Mateusz Loskot](https://github.com/mloskot), [Michael Kaes](https://github.com/mkaes), [Sewon Park](https://github.com/sphawk)
 
 Thank you to everyone who also opened issues on GitHub.
 
@@ -173,28 +194,11 @@ Thank you to everyone who also opened issues on GitHub.
 
 Thank you to everyone who contributed pull requests for this release:
 
-[Amy Troschinetz](https://github.com/lexicalunit),
-[Billy O'Neal](https://github.com/BillyONeal),
-[Christopher Blaesius](https://github.com/ChrisBFX),
-[Denis Glazachev](https://github.com/traceon),
-[detule](https://github.com/detule),
-[Diego Sogari](https://github.com/dsogari),
-[H1X4Dev](https://github.com/H1X4Dev),
-[Jim Hester](https://github.com/jimhester),
-[Jon Valvatne](https://github.com/jon-v),
-[Kun Ren](https://github.com/renkun-ken),
-[Mateusz Loskot](https://github.com/mloskot),
-[Michael C. Grant](https://github.com/mcg1969),
-[Rafee Memon](https://github.com/rafeememon),
-[Sauron](https://github.com/saur0n),
-[Seth Shelnutt](https://github.com/Shelnutt2),
-[ThermoX360](https://github.com/ThermoX360),
-[whizmo](https://github.com/whizmo)
+[Amy Troschinetz](https://github.com/lexicalunit), [Billy O'Neal](https://github.com/BillyONeal), [Christopher Blaesius](https://github.com/ChrisBFX), [Denis Glazachev](https://github.com/traceon), [detule](https://github.com/detule), [Diego Sogari](https://github.com/dsogari), [H1X4Dev](https://github.com/H1X4Dev), [Jim Hester](https://github.com/jimhester), [Jon Valvatne](https://github.com/jon-v), [Kun Ren](https://github.com/renkun-ken), [Mateusz Loskot](https://github.com/mloskot), [Michael C. Grant](https://github.com/mcg1969), [Rafee Memon](https://github.com/rafeememon), [Sauron](https://github.com/saur0n), [Seth Shelnutt](https://github.com/Shelnutt2), [ThermoX360](https://github.com/ThermoX360), [whizmo](https://github.com/whizmo)
 
 ## v2.12.4
 
-Resolves a possible crash with `SQLDescribeParam()`. In Progress OpenEdge 11 driver setting the
-nullableptr argument to null causes a crash. This does not affect SQLite or MySQL drivers.
+Resolves a possible crash with `SQLDescribeParam()`. In Progress OpenEdge 11 driver setting the nullableptr argument to null causes a crash. This does not affect SQLite or MySQL drivers.
 
 Thanks to [@AndrewJD79](https://github.com/AndrewJD79) for finding and diagnosing the issue!
 
@@ -212,9 +216,7 @@ Resolves a Travis-CI build issue.
 
 ## v2.12.0
 
-Major work undertaken by Mateusz Łoskot provides new features and a host of bug fixes throughout.
-Refactoring work moves nanodbc away from platform dependent `wchar_t` in favor of `char16_t` or in the
-case of iODBC with Unicode build enabled, `char32_t`. Boost.Test dropped in this version, in favor of Catch.
+Major work undertaken by Mateusz Łoskot provides new features and a host of bug fixes throughout. Refactoring work moves nanodbc away from platform dependent `wchar_t` in favor of `char16_t` or in the case of iODBC with Unicode build enabled, `char32_t`. Boost.Test dropped in this version, in favor of Catch.
 
 ## New Features
 

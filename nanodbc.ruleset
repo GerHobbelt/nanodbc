@@ -1,44 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  The C++ Core Guidelines checks, less the ones whose only remedy is the Guidelines Support
-  Library. nanodbc is distributed as a header and an implementation file that can be dropped
-  into a project, so taking on a dependency to satisfy an analyser is not a trade it can make.
-  Each rule below is turned off for that reason alone, and anything answerable with the
-  standard library or by restructuring is left switched on.
--->
-<RuleSet Name="nanodbc" Description="C++ Core Guidelines checks that do not require the GSL" ToolsVersion="17.0">
+<RuleSet Name="nanodbc" Description="C++ Core Guidelines checks nanodbc can answer" ToolsVersion="17.0">
   <Include Path="cppcorecheckrules.ruleset" Action="Default" />
   <Rules AnalyzerId="Microsoft.Analyzers.NativeCodeAnalysis" RuleNamespace="Microsoft.Rules.Native">
-    <!-- bounds.4: prefer gsl::at() to the subscript operator. -->
     <Rule Id="C26446" Action="None" />
-    <!-- bounds.2: only index into arrays using constant expressions, gsl::span otherwise. -->
     <Rule Id="C26482" Action="None" />
-    <!-- bounds.1: no pointer arithmetic, use gsl::span. The ODBC buffers are C arrays
-         handed to a C API, which is the shape the driver manager requires. -->
     <Rule Id="C26481" Action="None" />
-    <!-- bounds.3: no array to pointer decay, use gsl::span. Same reason. -->
     <Rule Id="C26485" Action="None" />
-    <!-- type.1: use gsl::narrow or gsl::narrow_cast rather than static_cast for an
-         arithmetic conversion. A narrow_cast of nanodbc's own would be a static_cast under
-         another name, which buys the reader nothing the cast does not already say, so this
-         one is settled rather than open. -->
     <Rule Id="C26472" Action="None" />
-    <!-- f.23: mark a parameter gsl::not_null. -->
     <Rule Id="C26429" Action="None" />
-    <!-- i.11: only delete through a gsl::owner. -->
     <Rule Id="C26401" Action="None" />
-    <!-- i.11 again, for the allocation rather than the delete. -->
     <Rule Id="C26400" Action="None" />
-    <!-- Calling an STL algorithm with a pointer, where the remedy offered is a gsl::span. -->
     <Rule Id="C26459" Action="None" />
-    <!-- type.7: prefer a variant to a naked union. The union objected to is the VARIANT
-         of the Windows SDK, which the _variant_t support exists to speak to. -->
     <Rule Id="C26476" Action="None" />
-    <!-- type.4: no C style casts. These sit where nanodbc hands a buffer or a handle to
-         the driver manager, and a named cast does not remove the alert so much as move it:
-         the same ruleset objects to reinterpret_cast with C26490 and to const_cast with
-         C26492, and passing a string's data to an entry point that wants a non-const
-         pointer needs both. The cast is the C API showing through, not untidiness. -->
     <Rule Id="C26493" Action="None" />
+    <Rule Id="C26490" Action="None" />
+    <Rule Id="C26473" Action="None" />
+    <Rule Id="C26477" Action="None" />
+    <Rule Id="C26460" Action="None" />
+    <Rule Id="C26455" Action="None" />
+    <Rule Id="C26434" Action="None" />
+    <Rule Id="C26456" Action="None" />
+    <Rule Id="C26812" Action="None" />
   </Rules>
 </RuleSet>

@@ -1,5 +1,3 @@
----
-# GHA workflow to build documentation and deploy with website in gh-pages branch
 name: "Documentation"
 
 on:
@@ -9,12 +7,12 @@ on:
     paths:
       - "doc/**"
       - "nanodbc/**"
+      - "example/**"
   pull_request:
     paths:
       - "doc/**"
       - "nanodbc/**"
-  # release.yml calls this for a version tag. Only this path deploys: the published site
-  # is the documentation of the latest release, not of whatever is currently on main.
+      - "example/**"
   workflow_call:
     inputs:
       ref:
@@ -22,11 +20,9 @@ on:
         type: string
         required: true
       archive-as:
-        description: "Version to also keep the build under, e.g. 2.16.0, as vX.Y.Z/"
+        description: "Minor series to also keep the build under, e.g. 2.16, as vX.Y/"
         type: string
         required: true
-# One run per workflow per ref. A new push cancels the run it superseded, except on main,
-# where each merge should be allowed to finish reporting.
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -40,10 +36,6 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
       - name: Fetch the published versions
-        # conf.py lists the archived versions on the Older Versions page by reading the
-        # directories on this branch, so that the page can only name a version whose pages
-        # are really there. Without the branch it says so and moves on, which is what a
-        # working copy that has never fetched it does too.
         run: git fetch --depth 1 origin gh-pages:refs/remotes/origin/gh-pages
       - name: Install Doxygen
         run: sudo apt-get update -y && sudo apt-get install -y doxygen
@@ -59,24 +51,16 @@ jobs:
         with:
           name: documentation
           path: doc/build/html
-          # The site carries a .nojekyll file that GitHub Pages needs, and the default
-          # upload drops the dotfiles.
           include-hidden-files: true
           retention-days: 7
 
-  # Pushes and pull requests get the build as a check and nothing more. Only release.yml
-  # passes a ref, so only a release reaches this job and rewrites the site.
   deploy:
     needs: build
     if: inputs.ref != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      # Deploying means committing the build to gh-pages.
       contents: write
-    # Every run that writes gh-pages shares this group, so two releases landing together
-    # are serialised instead of racing to push the branch. Neither may be cancelled:
-    # whichever is queued still has a site to publish.
     concurrency:
       group: gh-pages
       cancel-in-progress: false
@@ -93,34 +77,24 @@ jobs:
         run: |
           html="${GITHUB_WORKSPACE}/html"
           work="$(mktemp -d)"
-          # The branch holds released versions under their own directories as well as the
-          # current documentation at its root, so its history is kept and only the paths
-          # this run produces are written.
           git clone -q --depth 1 --branch gh-pages \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${work}"
           cd "${work}"
 
-          # Replacing a whole directory rather than merging into it is what drops the files
-          # a previous build left behind and this one no longer generates. Only the names
-          # the build produces are touched, so the archived versions alongside them stay.
           deploy()
           {
               local dest="$1"
               mkdir -p "${dest}"
               for path in "${html}"/* "${html}"/.[!.]*; do
                   [ -e "${path}" ] || continue
-                  # ${dest:?} so that an empty dest can never make this rm -rf a path
-                  # rooted at /.
                   rm -rf "${dest:?}/$(basename "${path}")"
               done
               cp -R "${html}/." "${dest}/"
           }
 
-          # The root is the latest release; the version directory is its permanent archive.
           deploy .
           deploy "v${ARCHIVE_AS}"
 
-          # The site is generated, so an unchanged build should leave no commit behind.
           git add --all
           if git diff --cached --quiet; then
             echo "Documentation is unchanged; nothing to deploy." >> "${GITHUB_STEP_SUMMARY}"
@@ -128,6 +102,6 @@ jobs:
           fi
           git -c user.name='github-actions[bot]' \
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              commit -qm "Documentation for v${ARCHIVE_AS}"
+              commit -qm "Documentation for v${ARCHIVE_AS} series"
           git push -q origin gh-pages
           echo "Deployed to https://nanodbc.github.io/nanodbc/" >> "${GITHUB_STEP_SUMMARY}"

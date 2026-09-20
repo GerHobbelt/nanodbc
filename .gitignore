@@ -26,7 +26,10 @@ package-lock.json
 .venv
 .pyvenv
 
-# VS2017 / VSCode
+# DOCtor-RST (for docs lint)
+.doctor-rst.cache
+
+# Visual Studio / VS Code
 /.vs*
 /CMakeUserPresets.json
 /CMakeSettings.json
@@ -56,6 +59,11 @@ website/
 *.csv
 *.db
 
-# Python bytecode, e.g. from doc/build.py
+# Python bytecode
 __pycache__/
 *.py[cod]
+
+# Coverage reports, written by llvm-cov into the working tree.
+coverage.lcov
+coverage.profdata
+*.profraw
