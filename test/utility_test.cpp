@@ -11,6 +11,14 @@
 #include <utility>
 #include <vector>
 
+#if __has_include(<version>)
+#include <version>
+#endif
+#if defined(__cpp_lib_ranges)
+#include <ranges>
+static_assert(std::ranges::input_range<nanodbc::result>);
+#endif
+
 // The UTF-8 codec replaced std::wstring_convert, so it is exercised directly here:
 // round trips across every encoded length, the surrogate pairs UTF-16 needs for anything
 // past the basic plane, and the malformed input it is expected to reject.
@@ -427,6 +435,46 @@ static_assert(
     !std::is_copy_assignable<nanodbc::table_valued_parameter>::value &&
         !std::is_move_assignable<nanodbc::table_valued_parameter>::value,
     "table_valued_parameter has no assignment: its move constructor withdrew both");
+
+TEST_CASE("get_data_chunk_sizes", "[result][string]")
+{
+    SECTION("a reported length sizes the next chunk to the rest of the value")
+    {
+        REQUIRE(read_get_data_chunk(SQL_SUCCESS_WITH_INFO, 5000, 1024, 1) == 1023);
+        REQUIRE(next_get_data_chunk(SQL_SUCCESS_WITH_INFO, 5000, 1024, 1) == 3978);
+        REQUIRE(read_get_data_chunk(SQL_SUCCESS, 3977, 3978, 1) == 3977);
+
+        REQUIRE(read_get_data_chunk(SQL_SUCCESS_WITH_INFO, 5000, 1024, 0) == 1024);
+        REQUIRE(next_get_data_chunk(SQL_SUCCESS_WITH_INFO, 5000, 1024, 0) == 3976);
+        REQUIRE(read_get_data_chunk(SQL_SUCCESS, 3976, 3976, 0) == 3976);
+    }
+
+    SECTION("no total keeps growing the chunk")
+    {
+        REQUIRE(read_get_data_chunk(SQL_SUCCESS_WITH_INFO, SQL_NO_TOTAL, 1024, 1) == 1023);
+        REQUIRE(next_get_data_chunk(SQL_SUCCESS_WITH_INFO, SQL_NO_TOTAL, 1024, 1) == 2048);
+    }
+
+    SECTION("a length that turns out short keeps growing the chunk")
+    {
+        REQUIRE(read_get_data_chunk(SQL_SUCCESS_WITH_INFO, 1000, 1024, 1) == 1000);
+        REQUIRE(next_get_data_chunk(SQL_SUCCESS_WITH_INFO, 1000, 1024, 1) == 2048);
+    }
+
+    SECTION("a failed call reads nothing, whatever the indicator holds")
+    {
+        SQLLEN const indeterminate = 0x7fffffff;
+        REQUIRE(read_get_data_chunk(SQL_ERROR, indeterminate, 1024, 1) == 0);
+        REQUIRE(next_get_data_chunk(SQL_ERROR, indeterminate, 1024, 1) == 1024);
+        REQUIRE(read_get_data_chunk(SQL_NO_DATA, indeterminate, 1024, 1) == 0);
+    }
+
+    SECTION("null and empty read nothing")
+    {
+        REQUIRE(read_get_data_chunk(SQL_SUCCESS, SQL_NULL_DATA, 1024, 1) == 0);
+        REQUIRE(read_get_data_chunk(SQL_SUCCESS, 0, 1024, 1) == 0);
+    }
+}
 
 // Catch is compiled without its own main(), so that the one large translation unit is
 // built once for every test program rather than twice.
